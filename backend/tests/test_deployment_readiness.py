@@ -257,7 +257,7 @@ class TestDeploymentReadiness(unittest.TestCase):
         with open('Procfile', 'r', encoding='utf-8') as f:
             procfile_content = f.read()
         self.assertIn('gunicorn', procfile_content)
-        self.assertIn('eventlet', procfile_content)
+        self.assertTrue('gthread' in procfile_content or 'eventlet' in procfile_content)
         self.assertIn('wsgi:app', procfile_content)
 
         # Private room privacy check: private room codes MUST NOT appear in public room listings
@@ -278,7 +278,7 @@ class TestDeploymentReadiness(unittest.TestCase):
         self.assertIn('DATABASE_URL', render_content)
         self.assertIn('kazhudhai-db', render_content)
         self.assertIn('gunicorn', render_content)
-        self.assertIn('eventlet', render_content)
+        self.assertTrue('gthread' in render_content or 'eventlet' in render_content)
         self.assertIn('healthCheckPath: /api/health', render_content)
 
 

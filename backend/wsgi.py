@@ -1,16 +1,16 @@
 """
 KAZHUDHAI CLUB — wsgi.py
 Production WSGI and SocketIO server entrypoint.
-Compatible with Gunicorn (Eventlet/Gevent) and Waitress.
+Compatible with Gunicorn (gthread, eventlet, gevent) and Waitress.
 Usage:
-  gunicorn --worker-class eventlet -w 1 wsgi:app
+  gunicorn --worker-class gthread --workers 1 --threads 100 --bind 0.0.0.0:$PORT wsgi:app
   waitress-serve --port=5000 wsgi:app
 """
 import os
 import sys
 
-# Monkey patch for eventlet in production environments prior to socket/network imports
-if os.environ.get('SOCKETIO_ASYNC_MODE', 'eventlet') == 'eventlet':
+# Monkey patch ONLY if eventlet is explicitly requested
+if os.environ.get('SOCKETIO_ASYNC_MODE') == 'eventlet':
     try:
         import eventlet
         eventlet.monkey_patch()
@@ -25,8 +25,7 @@ if backend_dir not in sys.path:
 from config import Config
 from app import app, socketio
 
-# Application callable for Gunicorn: `app` or `socketio.wsgi_app`
-# Gunicorn with eventlet uses `wsgi:app`
+# Application callable for Gunicorn: `app`
 application = app
 
 if __name__ == '__main__':

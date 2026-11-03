@@ -32,18 +32,14 @@ class Config:
     IS_POSTGRES = bool(_raw_db_url and _raw_db_url.startswith('postgresql://'))
 
     # ── SocketIO Async Worker Mode ──
-    # Allows environment override (e.g. eventlet, gevent, threading).
-    # On Linux/Cloud, eventlet powers production WebSockets. On Windows dev, threading is used.
+    # Modern Flask-SocketIO uses 'threading' powered by 'simple-websocket'
+    # which works seamlessly across Gunicorn gthread workers on Linux (Render)
+    # and local development on Windows without monkey-patching or C-extension issues.
     _env_async = os.environ.get('SOCKETIO_ASYNC_MODE')
     if _env_async:
         ASYNC_MODE = _env_async
     else:
-        try:
-            import eventlet
-            # Avoid eventlet issues on Python 3.12+ Windows if platform is win32
-            ASYNC_MODE = 'threading' if sys.platform == 'win32' else 'eventlet'
-        except ImportError:
-            ASYNC_MODE = 'threading'
+        ASYNC_MODE = 'threading'
 
     # ── Game Engine Constraints ──
     MIN_PLAYERS = 2
