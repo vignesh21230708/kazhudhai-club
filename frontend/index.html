@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>KAZHUDHAI CLUB</title>
+  <link rel="manifest" href="manifest.json" />
+  <meta name="theme-color" content="#1a5c2a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="icon" type="image/svg+xml" href="assets/images/icon-192.svg" />
+  <link rel="apple-touch-icon" href="assets/images/icon-192.svg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;900&family=Cinzel+Decorative:wght@400;700;900&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/main.css" />
+  <link rel="stylesheet" href="css/menu.css" />
+  <link rel="stylesheet" href="css/cards.css" />
+  <link rel="stylesheet" href="css/table.css" />
+  <link rel="stylesheet" href="css/modals.css" />
+  <link rel="stylesheet" href="css/responsive.css" />
+</head>
+<body>
+
+  <!-- ════════════════════════════════════════
+       SCREEN: MAIN MENU
+  ════════════════════════════════════════ -->
+  <div id="screen-menu" class="screen active">
+    <div class="menu-bg">
+      <div class="menu-bg-felt"></div>
+      <div class="menu-bg-pattern"></div>
+      <!-- Floating decorative cards -->
+      <div class="deco-card deco-card-1" aria-hidden="true"><div class="card-inner red">A<br/><span class="suit">♥</span></div></div>
+      <div class="deco-card deco-card-2" aria-hidden="true"><div class="card-inner">A<br/><span class="suit">♠</span></div></div>
+      <div class="deco-card deco-card-3" aria-hidden="true"><div class="card-inner red">K<br/><span class="suit">♦</span></div></div>
+      <div class="deco-card deco-card-4" aria-hidden="true"><div class="card-inner">Q<br/><span class="suit">♣</span></div></div>
+      <div class="deco-card deco-card-5" aria-hidden="true"><div class="card-inner red">J<br/><span class="suit">♥</span></div></div>
+    </div>
+
+    <div class="menu-container">
+      <!-- Logo -->
+      <div class="logo-section">
+        <div class="logo-emblem">
+          <div class="logo-suits">
+            <span class="logo-suit s1">♠</span>
+            <span class="logo-suit s2">♥</span>
+            <span class="logo-suit s3">♦</span>
+            <span class="logo-suit s4">♣</span>
+          </div>
+        </div>
+        <h1 class="logo-title">
+          <span class="logo-word">KAZHUDHAI</span>
+          <span class="logo-sub">C L U B</span>
+        </h1>
+        <p class="logo-tagline">The Last Card Loses</p>
+      </div>
+
+      <!-- Menu Buttons -->
+      <nav class="menu-nav" role="navigation">
+        <button class="menu-btn btn-primary" id="btn-play-offline">
+          <span class="btn-icon">🎮</span>
+          <span class="btn-text">Play Offline</span>
+          <span class="btn-sub">vs AI Opponents</span>
+        </button>
+        <button class="menu-btn btn-primary" id="btn-play-online">
+          <span class="btn-icon">🌐</span>
+          <span class="btn-text">Play Online</span>
+          <span class="btn-sub">With Real Players</span>
+        </button>
+        <button class="menu-btn btn-secondary" id="btn-rules">
+          <span class="btn-icon">📜</span>
+          <span class="btn-text">Rules</span>
+        </button>
+        <button class="menu-btn btn-secondary" id="btn-settings">
+          <span class="btn-icon">⚙️</span>
+          <span class="btn-text">Settings</span>
+        </button>
+      </nav>
+
+      <footer class="menu-footer">
+        <p>KAZHUDHAI CLUB &copy; 2026 &mdash; v1.0</p>
+      </footer>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       MODAL: OFFLINE SETUP
+  ════════════════════════════════════════ -->
+  <div id="modal-offline-setup" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="offline-setup-title">
+    <div class="modal-box">
+      <button class="modal-close" id="offline-setup-close" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="offline-setup-title">🎮 Offline Game Setup</h2>
+
+      <div class="setup-group">
+        <label class="setup-label">Your Name</label>
+        <input type="text" id="offline-player-name" class="setup-input" placeholder="Enter your name" maxlength="16" value="Player" />
+      </div>
+
+      <div class="setup-group">
+        <label class="setup-label">Number of Players (including you)</label>
+        <div class="btn-selector" id="player-count-selector">
+          <button class="sel-btn" data-value="2">2</button>
+          <button class="sel-btn" data-value="3">3</button>
+          <button class="sel-btn" data-value="4" data-selected>4</button>
+          <button class="sel-btn" data-value="5">5</button>
+          <button class="sel-btn" data-value="6">6</button>
+          <button class="sel-btn" data-value="7">7</button>
+        </div>
+      </div>
+
+      <div class="setup-group">
+        <label class="setup-label">Number of Decks</label>
+        <div class="btn-selector" id="deck-count-selector">
+          <button class="sel-btn" data-value="1" data-selected>1</button>
+          <button class="sel-btn" data-value="2">2</button>
+          <button class="sel-btn" data-value="3">3</button>
+          <button class="sel-btn" data-value="4">4</button>
+          <button class="sel-btn" data-value="5">5</button>
+        </div>
+        <p class="setup-hint" id="deck-card-count">1 deck = 52 cards</p>
+      </div>
+
+      <div class="setup-group">
+        <label class="setup-label">AI Difficulty</label>
+        <div class="btn-selector" id="difficulty-selector">
+          <button class="sel-btn" data-value="easy">Easy</button>
+          <button class="sel-btn" data-value="medium" data-selected>Medium</button>
+          <button class="sel-btn" data-value="hard">Hard</button>
+        </div>
+      </div>
+
+      <button class="action-btn" id="btn-start-offline">Start Game</button>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       MODAL: ONLINE MULTIPLAYER (PRIVATE & PUBLIC)
+  ════════════════════════════════════════ -->
+  <div id="modal-online-lobby" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="online-lobby-title">
+    <div class="modal-box modal-box-wide">
+      <button class="modal-close" id="online-lobby-close" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="online-lobby-title">🌐 Online Multiplayer</h2>
+
+      <!-- Live Connection Status in Lobby -->
+      <div class="online-server-status" id="online-server-status">
+        <span class="player-status-dot status-connected" id="online-server-status-dot"></span>
+        <span id="online-server-status-text">Connecting to server…</span>
+      </div>
+
+      <div class="setup-group">
+        <label class="setup-label">Your Display Name</label>
+        <input type="text" id="online-player-name" class="setup-input" placeholder="Enter your name" maxlength="16" value="Player" />
+      </div>
+
+      <!-- Online Navigation Tabs -->
+      <div class="online-tabs">
+        <button class="online-tab-btn active" data-tab="tab-create-private" id="tab-btn-create-private">🔒 Create Private Room</button>
+        <button class="online-tab-btn" data-tab="tab-join-private" id="tab-btn-join-private">🔑 Join Private Room</button>
+        <button class="online-tab-btn" data-tab="tab-public-rooms" id="tab-btn-public-rooms">🌍 Public Rooms</button>
+      </div>
+
+      <!-- TAB 1: Create Private Room -->
+      <div id="tab-create-private" class="online-tab-pane active">
+        <div class="setup-group">
+          <label class="setup-label">Max Players (2–7)</label>
+          <div class="btn-selector" id="online-private-players">
+            <button class="sel-btn" data-value="2">2</button>
+            <button class="sel-btn" data-value="3">3</button>
+            <button class="sel-btn" data-value="4" data-selected>4</button>
+            <button class="sel-btn" data-value="5">5</button>
+            <button class="sel-btn" data-value="6">6</button>
+            <button class="sel-btn" data-value="7">7</button>
+          </div>
+        </div>
+
+        <div class="setup-group">
+          <label class="setup-label">Number of Decks</label>
+          <div class="btn-selector" id="online-private-decks">
+            <button class="sel-btn" data-value="1" data-selected>1</button>
+            <button class="sel-btn" data-value="2">2</button>
+            <button class="sel-btn" data-value="3">3</button>
+            <button class="sel-btn" data-value="4">4</button>
+            <button class="sel-btn" data-value="5">5</button>
+          </div>
+          <p class="setup-hint" id="online-deck-card-count">1 deck = 52 cards (Single A♠)</p>
+        </div>
+
+        <button class="action-btn" id="btn-create-private-room">
+          <span>🔒</span> Create Private Room
+        </button>
+      </div>
+
+      <!-- TAB 2: Join Private Room -->
+      <div id="tab-join-private" class="online-tab-pane hidden">
+        <p class="online-tab-desc">Enter the 6-character room code shared by the room host:</p>
+        <div class="join-private-row">
+          <input
+            type="text"
+            id="private-room-code-input"
+            class="setup-input room-code-input"
+            placeholder="KZ----"
+            maxlength="6"
+            autocapitalize="characters"
+            autocomplete="off"
+            autocorrect="off"
+            spellcheck="false"
+            inputmode="text"
+          />
+          <button class="action-btn btn-join" id="btn-join-private-room">Join Room</button>
+        </div>
+      </div>
+
+      <!-- TAB 3: Public Rooms -->
+      <div id="tab-public-rooms" class="online-tab-pane hidden">
+        <div class="public-rooms-header">
+          <span class="setup-label">Available Public Lobbies</span>
+          <div class="public-actions">
+            <button class="refresh-btn" id="btn-refresh-public" title="Refresh list">🔄 Refresh</button>
+            <button class="action-btn-sm" id="btn-create-public-toggle">+ New Public Room</button>
+          </div>
+        </div>
+
+        <!-- Create Public Room Sub-panel -->
+        <div id="create-public-panel" class="create-public-panel hidden">
+          <div class="setup-group">
+            <label class="setup-label">Max Players (2–7)</label>
+            <div class="btn-selector" id="online-public-players">
+              <button class="sel-btn" data-value="2">2</button>
+              <button class="sel-btn" data-value="3">3</button>
+              <button class="sel-btn" data-value="4" data-selected>4</button>
+              <button class="sel-btn" data-value="5">5</button>
+              <button class="sel-btn" data-value="6">6</button>
+              <button class="sel-btn" data-value="7">7</button>
+            </div>
+          </div>
+          <div class="setup-group">
+            <label class="setup-label">Decks</label>
+            <div class="btn-selector" id="online-public-decks">
+              <button class="sel-btn" data-value="1" data-selected>1</button>
+              <button class="sel-btn" data-value="2">2</button>
+              <button class="sel-btn" data-value="3">3</button>
+              <button class="sel-btn" data-value="4">4</button>
+              <button class="sel-btn" data-value="5">5</button>
+            </div>
+          </div>
+          <button class="action-btn" id="btn-create-public-room">Launch Public Room</button>
+        </div>
+
+        <div class="public-room-list" id="public-room-list">
+          <div class="empty-rooms-hint" id="empty-rooms-hint">No active public rooms right now. Create one above!</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       MODAL: WAITING ROOM / LOBBY
+  ════════════════════════════════════════ -->
+  <div id="modal-room-waiting" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="waiting-room-title">
+    <div class="modal-box modal-box-wide">
+      <div class="waiting-room-header">
+        <span class="room-badge" id="waiting-room-badge">Private Room</span>
+        <h2 class="modal-title" id="waiting-room-title">Game Lobby</h2>
+      </div>
+
+      <div class="room-code-display">
+        <span class="room-code-label">Room Code:</span>
+        <span class="room-code-big" id="waiting-room-code">KZ----</span>
+        <button class="copy-code-btn" id="btn-copy-room-code" title="Copy code to clipboard">
+          📋 Copy
+        </button>
+      </div>
+
+      <div class="waiting-players-title">
+        <span>Joined Players (<span id="waiting-player-count">1</span>/<span id="waiting-max-players">4</span>)</span>
+        <span id="waiting-deck-info">1 Deck (52 cards)</span>
+      </div>
+
+      <div class="waiting-players-grid" id="waiting-players-grid">
+        <!-- Player slots injected by JS -->
+      </div>
+
+      <!-- Real-time Lobby Activity Feed -->
+      <div class="waiting-activity-box">
+        <div class="waiting-activity-title">
+          <span>📜 Lobby Activity</span>
+        </div>
+        <div class="waiting-activity-list" id="waiting-activity-list">
+          <div class="empty-activity-hint">Waiting for room events…</div>
+        </div>
+      </div>
+
+      <div class="waiting-status-notice" id="waiting-status-notice">
+        Waiting for host to start the game… (min 2 players required)
+      </div>
+
+      <div class="waiting-actions">
+        <button class="action-btn btn-leave" id="btn-leave-waiting-room">Leave</button>
+        <button class="action-btn" id="btn-host-start-game" disabled>Start Game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       MODAL: RULES
+  ════════════════════════════════════════ -->
+  <div id="modal-rules" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="rules-title">
+    <div class="modal-box modal-box-wide">
+      <button class="modal-close" id="rules-close" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="rules-title">📜 How to Play</h2>
+      <div class="rules-content">
+        <div class="rule-section">
+          <h3>🎯 Objective</h3>
+          <p>Be the first to empty your hand. The <strong>last player still holding cards</strong> becomes <span class="kazhudhai-word">KAZHUDHAI</span>!</p>
+        </div>
+        <div class="rule-section">
+          <h3>🃏 Card Ranking (Highest → Lowest)</h3>
+          <p class="rank-row">A &gt; K &gt; Q &gt; J &gt; 10 &gt; 9 &gt; 8 &gt; 7 &gt; 6 &gt; 5 &gt; 4 &gt; 3 &gt; 2</p>
+          <p>The player holding <strong>A♠</strong> starts the first round.</p>
+        </div>
+        <div class="rule-section">
+          <h3>🟢 Normal Round (No Attack)</h3>
+          <ol>
+            <li>Starting player plays a card — that suit becomes the <em>starting suit</em>.</li>
+            <li>Every other player must follow that suit if they have it.</li>
+            <li>If all players follow, the round ends normally.</li>
+            <li>Highest-ranking card of the starting suit wins.</li>
+            <li>All played cards go into the <strong>common collected section</strong> (permanently removed).</li>
+            <li>The winner starts the next round.</li>
+          </ol>
+        </div>
+        <div class="rule-section">
+          <h3>🔴 Attack Round</h3>
+          <ol>
+            <li>If a player cannot follow the starting suit, they play any other card.</li>
+            <li>This triggers an <strong>ATTACK</strong> — the round ends immediately!</li>
+            <li>Remaining players skip their turn.</li>
+            <li>Highest card of the starting suit still wins.</li>
+            <li>ALL played cards (including the attacking card) go to the <strong>winner's hand</strong>.</li>
+          </ol>
+        </div>
+        <div class="rule-section">
+          <h3>⚠️ Playing Your Last Card</h3>
+          <p>Playing your last card does <strong>NOT</strong> immediately eliminate you. Wait for the round to finish. If an attack occurs and you win — you get cards back!</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       MODAL: SETTINGS
+  ════════════════════════════════════════ -->
+  <div id="modal-settings" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="modal-box">
+      <button class="modal-close" id="settings-close" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="settings-title">⚙️ Settings</h2>
+
+      <div class="settings-grid">
+        <div class="setting-row">
+          <label class="setting-label">Sound Effects</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-sfx" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label class="setting-label">Background Music</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-music" />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label class="setting-label">Animations</label>
+          <label class="toggle-switch">
+            <input type="checkbox" id="setting-animations" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="setup-group" style="margin-top:1rem;">
+          <label class="setup-label">Table Theme</label>
+          <div class="theme-picker">
+            <button class="theme-btn theme-green active" data-theme="green" title="Classic Green"></button>
+            <button class="theme-btn theme-blue" data-theme="blue" title="Blue Velvet"></button>
+            <button class="theme-btn theme-red" data-theme="red" title="Red Burgundy"></button>
+            <button class="theme-btn theme-dark" data-theme="dark" title="Dark Slate"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       SCREEN: GAME TABLE
+  ════════════════════════════════════════ -->
+  <div id="screen-game" class="screen hidden">
+
+    <!-- Top HUD Bar -->
+    <div class="hud-bar">
+      <button class="hud-btn" id="btn-menu-game" aria-label="Menu">☰</button>
+      <div class="hud-info">
+        <span class="hud-label">Room</span>
+        <span class="hud-value" id="hud-room-code">OFFLINE</span>
+      </div>
+      <div class="hud-info">
+        <span class="hud-label">Decks</span>
+        <span class="hud-value" id="hud-deck-count">1</span>
+      </div>
+      <div class="hud-info">
+        <span class="hud-label">Common Pile</span>
+        <span class="hud-value" id="hud-common-count">0 cards</span>
+      </div>
+      <div class="hud-status" id="hud-status">Waiting to start…</div>
+      <button class="hud-btn activity-btn" id="btn-toggle-activity" title="Game Activity History (🕘)" aria-label="Game Activity">
+        🕘
+        <span class="activity-badge hidden" id="activity-badge">0</span>
+      </button>
+    </div>
+
+    <!-- Game Activity Backdrop (Closes on outside click) -->
+    <div class="activity-backdrop hidden" id="activity-backdrop"></div>
+
+    <!-- Game Activity History Popup / Side Panel -->
+    <div class="activity-drawer hidden" id="activity-drawer" role="dialog" aria-modal="true" aria-label="Game Activity History">
+      <div class="activity-drawer-header">
+        <div class="activity-drawer-title">
+          <span>🕘</span>
+          <span>Game Activity</span>
+        </div>
+        <button class="activity-drawer-close" id="btn-close-activity" aria-label="Close Activity (×)">✕</button>
+      </div>
+      <div class="activity-drawer-body" id="activity-log-list">
+        <div class="empty-activity-hint">No activity recorded yet</div>
+      </div>
+    </div>
+
+    <!-- Main Game Table -->
+    <div class="game-table" id="game-table">
+      <div class="table-felt">
+        <div class="table-border"></div>
+
+        <!-- 🕘 History Icon Button (Top-Right corner of table) -->
+        <button class="table-history-btn" id="btn-table-history" title="Game History (🕘)" aria-label="Game History">
+          <span class="table-history-icon">🕘</span>
+          <span class="activity-badge hidden" id="table-history-badge">0</span>
+        </button>
+
+        <div class="table-inner">
+
+          <!-- ── Top Opponents Area ── -->
+          <div class="opponents-area opponents-top" id="opponents-top">
+            <!-- Players injected by JS -->
+          </div>
+
+          <!-- ── Left Opponent ── -->
+          <div class="opponents-area opponents-left" id="opponents-left">
+          </div>
+
+          <!-- ── Right Opponent ── -->
+          <div class="opponents-area opponents-right" id="opponents-right">
+          </div>
+
+          <!-- ── Centre Play Area ── -->
+          <div class="centre-area">
+            <!-- Attack notification -->
+            <div class="attack-banner hidden" id="attack-banner">
+              <div class="attack-icon">⚔️</div>
+              <div class="attack-text">ATTACK!</div>
+              <div class="attack-sub" id="attack-sub">Player attacked the round</div>
+            </div>
+
+            <!-- Round played cards -->
+            <div class="played-cards-zone" id="played-cards-zone">
+              <div class="zone-label">Cards in Play</div>
+              <div class="played-cards-row" id="played-cards-row">
+                <!-- Cards injected here -->
+                <div class="empty-zone-hint">Waiting for first card…</div>
+              </div>
+            </div>
+
+            <!-- Common collected section -->
+            <div class="collected-zone" id="common-collected-zone">
+              <div class="zone-label">Common Collected</div>
+              <div class="collected-pile" id="common-pile">
+                <div class="pile-stack">
+                  <div class="pile-count-badge" id="common-pile-count">0</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ── Turn indicator ring ── -->
+          <div class="turn-indicator" id="turn-indicator">
+            <span id="turn-text">—</span>
+          </div>
+
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom: Human Player Area -->
+    <div class="player-self-area" id="player-self-area">
+      <div class="self-info-row">
+        <div class="self-avatar" id="self-avatar">
+          <span class="avatar-emoji">👤</span>
+        </div>
+        <div class="self-details">
+          <div class="self-name-row">
+            <span class="self-name" id="self-name">You</span>
+            <span class="self-status-badge status-connected" id="self-status-badge">
+              <span class="player-status-dot status-connected"></span>
+              <span class="status-text">Connected</span>
+            </span>
+          </div>
+          <span class="self-card-count"><span id="self-card-count">0</span> cards</span>
+        </div>
+        <div class="self-collected-zone" id="self-collected-zone" style="display:none;">
+          <span class="zone-label-sm">Attack Won</span>
+          <div class="attack-pile" id="self-attack-pile">
+            <div class="pile-count-badge-sm" id="self-attack-count">0</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Your hand of cards -->
+      <div class="hand-container" id="hand-container">
+        <div class="hand-row" id="hand-row">
+          <!-- Player's cards rendered here -->
+        </div>
+      </div>
+
+      <!-- Play/Pass action button -->
+      <div class="action-bar" id="action-bar">
+        <button class="play-btn" id="btn-play-card" disabled>
+          Play Selected Card
+        </button>
+        <div class="action-hint" id="action-hint">Wait for your turn</div>
+      </div>
+    </div>
+
+    <!-- In-game menu panel (slide-in) -->
+    <div class="ingame-menu hidden" id="ingame-menu">
+      <div class="ingame-menu-inner">
+        <h3>Game Menu</h3>
+        <button class="menu-btn btn-secondary" id="btn-restart-game">🔄 Restart Game</button>
+        <button class="menu-btn btn-secondary" id="btn-rules-ingame">📜 Rules</button>
+        <button class="menu-btn btn-secondary" id="btn-settings-ingame">⚙️ Settings</button>
+        <button class="menu-btn btn-danger" id="btn-exit-game">🚪 Exit to Menu</button>
+        <button class="menu-btn btn-ghost" id="btn-close-ingame-menu">✕ Close</button>
+      </div>
+    </div>
+
+    <!-- Exit confirmation -->
+    <div class="confirm-overlay hidden" id="confirm-exit">
+      <div class="confirm-box">
+        <h3>Exit Game?</h3>
+        <p>Your progress will be lost. Are you sure?</p>
+        <div class="confirm-actions">
+          <button class="action-btn btn-danger-sm" id="btn-confirm-exit">Yes, Exit</button>
+          <button class="action-btn btn-ghost-sm" id="btn-cancel-exit">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- ════════════════════════════════════════
+       SCREEN: RESULTS
+  ════════════════════════════════════════ -->
+  <div id="screen-results" class="screen hidden">
+    <div class="results-container">
+      <div class="results-header">
+        <div class="results-logo">🃏</div>
+        <h1 class="results-title">Game Over!</h1>
+      </div>
+
+      <div class="results-kazhudhai-banner" id="results-kazhudhai-banner">
+        <div class="kazhudhai-crown">👑</div>
+        <div class="kazhudhai-label">KAZHUDHAI</div>
+        <div class="kazhudhai-name" id="kazhudhai-name">Player</div>
+        <div class="kazhudhai-sub">Last one holding cards!</div>
+      </div>
+
+      <div class="results-rankings" id="results-rankings">
+        <!-- Rankings injected here -->
+      </div>
+
+      <div class="results-actions">
+        <button class="action-btn" id="btn-play-again">🔄 Play Again</button>
+        <button class="action-btn btn-secondary-action" id="btn-main-menu">🏠 Main Menu</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Toast Notifications -->
+  <div id="toast-container" class="toast-container" aria-live="polite"></div>
+
+  <!-- Socket.IO Client (Bundled locally for 100% offline & local network reliability) -->
+  <script src="js/lib/socket.io.min.js"></script>
+  <script>
+    if (typeof io === 'undefined') {
+      const fallbackScript = document.createElement('script');
+      fallbackScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.8.1/socket.io.min.js';
+      document.head.appendChild(fallbackScript);
+    }
+  </script>
+
+  <!-- Scripts -->
+  <script src="js/utils/storage.js"></script>
+  <script src="js/utils/sound.js"></script>
+  <script src="js/ui/card-renderer.js"></script>
+  <script src="js/ui/animations.js"></script>
+  <script src="js/ui/menu.js"></script>
+  <script src="js/ui/table.js"></script>
+  <script src="js/game/game-client.js"></script>
+  <script src="js/game/offline-client.js"></script>
+  <script src="js/game/online-client.js"></script>
+  <script src="js/main.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/service-worker.js').catch(err => console.log('SW registration failed:', err));
+      });
+    }
+  </script>
+</body>
+</html>

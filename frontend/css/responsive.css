@@ -1,0 +1,765 @@
+/* ═══════════════════════════════════════════════════
+   KAZHUDHAI CLUB — responsive.css
+   Breakpoints for mobile portrait / landscape / tablet / desktop
+═══════════════════════════════════════════════════ */
+
+/* ── Default: Mobile portrait (up to 480px) ── */
+:root {
+  --hand-height: 124px;
+  --action-height: 46px;
+  --hud-height: 44px;
+}
+
+#screen-game {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+}
+
+.playing-card {
+  width: 62px;
+  height: 90px;
+}
+
+.card-rank        { font-size: 0.88rem; font-weight: 900; }
+.card-suit-small  { font-size: 0.72rem; }
+.card-center-suit { font-size: 1.85rem; }
+
+.opponent-avatar { width: 32px; height: 32px; font-size: 1rem; }
+.opponent-name   { font-size: 0.65rem; }
+
+.played-cards-zone { min-width: 140px; min-height: 66px; }
+
+/* Dynamic card overlap in human hand */
+.hand-row .hand-card {
+  margin-left: var(--hand-overlap, -14px);
+}
+
+.hand-row .hand-card:first-child {
+  margin-left: 0 !important;
+}
+
+.hand-row .hand-card:last-child {
+  margin-right: 18px !important;
+}
+
+/* ── Tablet / large mobile (481px+) ── */
+@media (min-width: 481px) {
+  :root {
+    --hand-height: 146px;
+    --action-height: 58px;
+    --hud-height: 48px;
+  }
+
+  .playing-card {
+    width: 66px;
+    height: 94px;
+  }
+
+  .card-rank        { font-size: 0.84rem; }
+  .card-suit-small  { font-size: 0.7rem; }
+  .card-center-suit { font-size: 1.9rem; }
+
+  .hand-row .hand-card {
+    margin-left: var(--hand-overlap, -20px);
+  }
+}
+
+/* ── Desktop (769px+) ── */
+@media (min-width: 769px) {
+  :root {
+    --hand-height: 180px;
+    --action-height: 70px;
+    --hud-height: 52px;
+  }
+
+  .playing-card {
+    width: 70px;
+    height: 100px;
+  }
+
+  .card-rank        { font-size: 0.85rem; }
+  .card-suit-small  { font-size: 0.7rem; }
+  .card-center-suit { font-size: 2rem; }
+
+  .opponent-avatar { width: 42px; height: 42px; font-size: 1.2rem; }
+  .opponent-name   { font-size: 0.75rem; }
+
+  .played-cards-zone { min-width: 220px; min-height: 90px; }
+
+  .hand-row .hand-card {
+    margin-left: var(--hand-overlap, -16px);
+  }
+
+  /* Side panel visible on wide screens */
+  .ingame-menu { width: 280px; }
+}
+
+/* ── Large desktop (1200px+) ── */
+@media (min-width: 1200px) {
+  .playing-card {
+    width: 76px;
+    height: 108px;
+  }
+
+  .card-rank        { font-size: 0.9rem; }
+  .card-center-suit { font-size: 2.2rem; }
+
+  .hand-row .hand-card {
+    margin-left: var(--hand-overlap, -14px);
+  }
+
+  .played-cards-zone { min-width: 260px; min-height: 110px; }
+
+  .game-table {
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+}
+
+/* ── Landscape mobile (short height) ── */
+@media (max-height: 500px) and (orientation: landscape) {
+  :root {
+    --hand-height: 102px;
+    --action-height: 40px;
+    --hud-height: 38px;
+  }
+
+  #screen-game {
+    height: 100vh;
+    height: 100dvh;
+    max-height: 100dvh;
+    overflow: hidden;
+  }
+
+  .playing-card { width: 48px; height: 70px; }
+  .card-rank { font-size: 0.7rem; }
+  .card-center-suit { font-size: 1.35rem; }
+
+  .self-info-row { padding: 2px 10px 0; min-height: 24px; }
+  .self-avatar { width: 22px; height: 22px; font-size: 0.75rem; }
+  .self-name { font-size: 0.68rem; }
+  .self-card-count { font-size: 0.65rem; }
+
+  .hand-container {
+    height: 98px;
+    min-height: 98px;
+    padding: 16px 8px 2px;
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .hand-row .playing-card {
+    width: 48px;
+    height: 70px;
+    margin-left: var(--hand-overlap, -18px);
+  }
+
+  .hand-row .hand-card.selected {
+    transform: translateY(-12px);
+    margin-left: var(--hand-overlap, -18px);
+    margin-right: 0;
+  }
+
+  .action-bar {
+    min-height: 38px;
+    padding: 2px 8px 3px;
+  }
+
+  .play-btn {
+    min-height: 34px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+  }
+
+  .logo-emblem { width: 60px; height: 60px; }
+  .logo-word   { font-size: 1.3rem; }
+
+  /* Table & Opponents in Landscape Mobile */
+  .table-inner {
+    padding: 4px 6px;
+    gap: 3px;
+  }
+
+  .opponent-slot {
+    min-width: 0;
+    max-width: 58px;
+    gap: 1px;
+  }
+
+  .opponent-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 0.75rem;
+  }
+
+  .opponent-name {
+    font-size: 0.58rem;
+    max-width: 54px;
+  }
+
+  .opponent-card-count {
+    font-size: 0.54rem;
+  }
+
+  .opponent-hand-fan {
+    height: 18px;
+    margin-top: -1px;
+  }
+
+  .opponent-card-back {
+    width: 13px;
+    height: 18px;
+    margin-left: -7px;
+  }
+
+  .opponents-left,
+  .opponents-right {
+    gap: 2px;
+    justify-content: space-evenly;
+  }
+
+  .opponent-slot.side {
+    max-width: 52px;
+    gap: 1px;
+  }
+}
+
+/* ── Touch devices — interaction improvements ── */
+@media (hover: none) {
+  .hand-card { transition: transform 0.12s ease; }
+  .hand-card:hover { transform: none; }
+  .hand-card.selected {
+    transform: translateY(-16px) scale(1.03);
+    z-index: 50 !important;
+  }
+
+  .menu-btn  { min-height: 52px; }
+  .play-btn  { min-height: 42px; }
+  .sel-btn   { min-height: 40px; min-width: 44px; }
+}
+
+/* ── Mobile Activity Drawer (< 768px) ── */
+@media (max-width: 768px) {
+  .table-history-btn {
+    top: 8px;
+    right: 8px;
+    width: 32px;
+    height: 32px;
+  }
+  .table-history-icon {
+    font-size: 1.05rem;
+  }
+
+  .activity-drawer {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    max-width: 100%;
+    max-height: 60vh;
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    border-top: 2px solid rgba(201, 168, 76, 0.5);
+    box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.75);
+    transform: translateY(0);
+  }
+
+  .activity-drawer.hidden {
+    transform: translateY(100%);
+    opacity: 0;
+    pointer-events: none;
+  }
+}
+
+/* ═══════════════════════════════════════════════════
+   MOBILE PORTRAIT GAME TABLE & HAND (< 480px)
+═══════════════════════════════════════════════════ */
+@media (max-width: 480px) {
+  /* Modals */
+  .modal-box,
+  .modal-box-wide {
+    padding: 1.25rem 1rem;
+    max-width: 95vw;
+    border-radius: 14px;
+  }
+
+  .online-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+
+  .online-tab-btn {
+    flex: 1 1 calc(50% - 4px);
+    font-size: 0.72rem;
+    padding: 10px 6px;
+    white-space: normal;
+    min-height: 42px;
+  }
+
+  .online-tab-btn:last-child:nth-child(odd) {
+    flex: 1 1 100%;
+  }
+
+  .join-private-row {
+    flex-direction: column;
+    gap: 10px;
+    width: 100%;
+  }
+
+  .room-code-input {
+    width: 100%;
+    min-height: 48px;
+    font-size: 1.3rem;
+    padding: 10px;
+  }
+
+  #btn-join-private-room,
+  #btn-create-private-room {
+    width: 100%;
+    min-height: 48px;
+    font-size: 1rem;
+  }
+
+  .waiting-room-code-box {
+    padding: 8px 12px;
+  }
+
+  .waiting-room-code {
+    font-size: 1.4rem;
+  }
+
+  .waiting-players-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  /* ── HUD ── */
+  .hud-bar {
+    height: 44px;
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  .hud-btn {
+    font-size: 1.15rem;
+    padding: 4px 6px;
+  }
+
+  .hud-info {
+    min-width: 45px;
+  }
+
+  .hud-label {
+    font-size: 0.52rem;
+  }
+
+  .hud-value {
+    font-size: 0.76rem;
+  }
+
+  .hud-status {
+    font-size: 0.72rem;
+    max-width: 125px;
+  }
+
+  /* ── Game Table Felt ── */
+  .game-table {
+    flex: 1 1 0%;
+    min-height: 0;
+    display: flex;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .table-border {
+    inset: 5px;
+    border-radius: 26px;
+  }
+
+  .table-inner {
+    padding: 6px 4px;
+    gap: 3px;
+    grid-template-columns: minmax(min-content, auto) minmax(0, 1fr) minmax(min-content, auto);
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+  }
+
+  /* Compact Opponents (2 to 7 players) */
+  .opponents-top {
+    gap: 5px;
+    padding-top: 2px;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+
+  .opponent-slot {
+    min-width: 0;
+    max-width: 65px;
+    gap: 2px;
+    box-sizing: border-box;
+    flex-shrink: 1;
+  }
+
+  .opponent-avatar {
+    width: 30px;
+    height: 30px;
+    font-size: 0.85rem;
+  }
+
+  .opponent-name {
+    font-size: 0.62rem;
+    max-width: 60px;
+  }
+
+  .opponent-card-count {
+    font-size: 0.6rem;
+  }
+
+  .opponent-hand-fan {
+    height: 22px;
+    margin-top: -2px;
+  }
+
+  .opponent-card-back {
+    width: 16px;
+    height: 22px;
+    margin-left: -9px;
+    border-radius: 3px;
+  }
+
+  .opponents-left,
+  .opponents-right {
+    padding: 0 2px;
+    gap: 3px;
+    justify-content: space-evenly;
+    height: 100%;
+    max-height: 100%;
+    box-sizing: border-box;
+  }
+
+  .opponent-slot.side {
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    max-width: 46px;
+  }
+
+  /* 6-Player Balanced Mobile Portrait Layout (1 Left, 3 Top, 1 Right) */
+  .table-inner.players-6 .opponents-top {
+    gap: 4px;
+  }
+
+  .table-inner.players-6 .opponent-slot {
+    max-width: 50px;
+  }
+
+  .table-inner.players-6 .opponent-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 0.78rem;
+  }
+
+  .table-inner.players-6 .opponent-name {
+    font-size: 0.58rem;
+    max-width: 48px;
+  }
+
+  .table-inner.players-6 .opponent-card-count {
+    font-size: 0.54rem;
+  }
+
+  .table-inner.players-6 .opponent-hand-fan {
+    height: 18px;
+    max-width: 36px;
+  }
+
+  .table-inner.players-6 .opponent-card-back {
+    width: 13px;
+    height: 18px;
+    margin-left: -7px;
+  }
+
+  /* 7-Player Balanced Mobile Portrait Layout (2 Left, 2 Top, 2 Right) */
+  .table-inner.players-7 .opponents-top {
+    gap: 8px;
+  }
+
+  .table-inner.players-7 .opponents-left,
+  .table-inner.players-7 .opponents-right {
+    gap: 4px;
+    justify-content: space-evenly;
+  }
+
+  .table-inner.players-7 .opponent-slot {
+    max-width: 46px;
+    min-width: 0;
+  }
+
+  .table-inner.players-7 .opponent-avatar {
+    width: 26px;
+    height: 26px;
+    font-size: 0.78rem;
+  }
+
+  .table-inner.players-7 .opponent-name {
+    font-size: 0.58rem;
+    max-width: 46px;
+  }
+
+  .table-inner.players-7 .opponent-card-count {
+    font-size: 0.54rem;
+  }
+
+  .table-inner.players-7 .opponent-hand-fan {
+    height: 18px;
+    max-width: 36px;
+  }
+
+  .table-inner.players-7 .opponent-card-back {
+    width: 13px;
+    height: 18px;
+    margin-left: -7px;
+  }
+
+  /* ── Centre Play Area ── */
+  .centre-area {
+    gap: 4px;
+  }
+
+  .played-cards-zone {
+    min-width: 135px;
+    max-width: 95%;
+    min-height: 60px;
+    padding: 4px 8px;
+    border-radius: 8px;
+  }
+
+  .zone-label {
+    font-size: 0.58rem;
+    margin-bottom: 2px;
+  }
+
+  .played-cards-row {
+    min-height: 44px;
+    gap: 4px;
+    justify-content: center;
+  }
+
+  .played-cards-row .playing-card {
+    width: 40px;
+    height: 56px;
+  }
+
+  .played-cards-row .card-rank {
+    font-size: 0.68rem;
+  }
+
+  .played-cards-row .card-center-suit {
+    font-size: 1.15rem;
+  }
+
+  .collected-zone {
+    gap: 5px;
+  }
+
+  .pile-stack {
+    width: 26px;
+    height: 36px;
+  }
+
+  .pile-count-badge {
+    width: 18px;
+    height: 18px;
+    font-size: 0.58rem;
+    top: -5px;
+    right: -5px;
+  }
+
+  .turn-indicator {
+    bottom: 2px;
+    font-size: 0.68rem;
+    padding: 2px 10px;
+    z-index: 25;
+  }
+
+  .attack-banner {
+    padding: 4px 12px;
+    gap: 6px;
+  }
+
+  .attack-icon { font-size: 1.1rem; }
+  .attack-text { font-size: 0.95rem; }
+  .attack-sub  { font-size: 0.62rem; }
+
+  .table-history-btn {
+    top: 6px;
+    right: 6px;
+    width: 28px;
+    height: 28px;
+  }
+
+  .table-history-icon {
+    font-size: 0.95rem;
+  }
+
+  /* ── Human Player Area (Bottom) ── */
+  .player-self-area {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    background: rgba(4, 12, 6, 0.95);
+    border-top: 1.5px solid rgba(201, 168, 76, 0.4);
+    box-shadow: 0 -6px 20px rgba(0, 0, 0, 0.6);
+    z-index: 50;
+    padding-bottom: max(4px, env(safe-area-inset-bottom));
+  }
+
+  .self-info-row {
+    padding: 3px 10px 0;
+    min-height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .self-avatar {
+    width: 24px;
+    height: 24px;
+    font-size: 0.75rem;
+  }
+
+  .self-name {
+    font-size: 0.72rem;
+  }
+
+  .self-status-badge {
+    font-size: 0.58rem;
+    padding: 1px 5px;
+  }
+
+  .self-card-count {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--gold);
+  }
+
+  /* ── Hand Container & Row ── */
+  .hand-container {
+    height: 124px;
+    min-height: 124px;
+    padding: 18px 10px 4px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+    display: flex;
+    align-items: flex-end;
+    touch-action: pan-x;
+  }
+
+  .hand-row {
+    display: inline-flex;
+    align-items: flex-end;
+    min-width: 100%;
+    width: max-content;
+    height: 100%;
+    padding: 0 4px;
+    gap: 0;
+  }
+
+  .hand-row .playing-card {
+    width: 62px;
+    height: 90px;
+    margin-left: var(--hand-overlap, -14px);
+    flex-shrink: 0;
+    border-radius: 6px;
+  }
+
+  .hand-row .playing-card:first-child {
+    margin-left: 0 !important;
+  }
+
+  .hand-row .playing-card:last-child {
+    margin-right: 18px !important;
+  }
+
+  .hand-row .playing-card .card-rank {
+    font-size: 0.88rem;
+    font-weight: 900;
+  }
+
+  .hand-row .playing-card .card-suit-small {
+    font-size: 0.72rem;
+  }
+
+  .hand-row .playing-card .card-center-suit {
+    font-size: 1.85rem;
+  }
+
+  /* Selected Card Highlight */
+  .hand-row .hand-card.selected {
+    transform: translateY(-16px);
+    box-shadow: 0 10px 24px rgba(0, 0, 0, 0.85), 0 0 0 2.5px var(--gold), 0 0 14px rgba(201, 168, 76, 0.7);
+    z-index: 50 !important;
+    margin-left: var(--hand-overlap, -14px);
+    margin-right: 0;
+  }
+
+  .hand-row .hand-card:first-child.selected {
+    margin-left: 0 !important;
+  }
+
+  .hand-row .hand-card:last-child.selected {
+    margin-right: 18px !important;
+  }
+
+  /* ── Action Bar ── */
+  .action-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 10px 4px;
+    min-height: 44px;
+    height: auto;
+  }
+
+  .play-btn {
+    flex: 1;
+    min-height: 40px;
+    padding: 6px 12px;
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .action-hint {
+    font-size: 0.7rem;
+    max-width: 45%;
+    text-align: right;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .toast-container {
+    bottom: calc(124px + 44px + 36px);
+  }
+}
+
+/* ── Print (just in case) ── */
+@media print { .screen { display: none !important; } }

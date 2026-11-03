@@ -1,0 +1,14 @@
+{
+  "appId": "club.kazhudhai.game",
+  "appName": "KAZHUDHAI CLUB",
+  "webDir": "frontend",
+  "bundledWebRuntime": false,
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "android": {
+    "allowMixedContent": true,
+    "backgroundColor": "#061a0b"
+  }
+}

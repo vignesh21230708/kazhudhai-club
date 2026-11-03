@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#2a8040"/>
+      <stop offset="70%" stop-color="#0f3518"/>
+      <stop offset="100%" stop-color="#061a0b"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ffe680"/>
+      <stop offset="50%" stop-color="#ffd700"/>
+      <stop offset="100%" stop-color="#b8860b"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="100" fill="url(#bg)"/>
+  <rect x="24" y="24" width="464" height="464" rx="80" fill="none" stroke="url(#gold)" stroke-width="8" opacity="0.6"/>
+  <!-- Card icon -->
+  <rect x="126" y="86" width="260" height="340" rx="24" fill="#fffef8" stroke="url(#gold)" stroke-width="6" filter="drop-shadow(0 10px 25px rgba(0,0,0,0.6))"/>
+  <!-- Spade symbol in center -->
+  <path d="M 256,160 C 240,202 176,245 176,286 C 176,318 202,344 234,344 C 250,344 253,334 256,328 C 259,334 262,344 278,344 C 310,344 336,318 336,286 C 336,245 272,202 256,160 Z" fill="#111"/>
+  <path d="M 248,324 L 235,372 L 277,372 L 264,324 Z" fill="#111"/>
+  <text x="152" y="152" font-family="serif" font-weight="900" font-size="52" fill="#111">A</text>
+  <text x="360" y="396" font-family="serif" font-weight="900" font-size="52" fill="#111" text-anchor="end">A</text>
+</svg>

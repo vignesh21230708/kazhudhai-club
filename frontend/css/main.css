@@ -1,0 +1,216 @@
+/* ═══════════════════════════════════════════════════
+   KAZHUDHAI CLUB — main.css
+   Global base styles, resets, variables
+═══════════════════════════════════════════════════ */
+
+:root {
+  /* ── Table Themes ── */
+  --table-green:   #1a5c2a;
+  --table-blue:    #1a2f5c;
+  --table-red:     #5c1a1a;
+  --table-dark:    #1a1a2e;
+
+  /* Active theme (default: green) */
+  --table-color:       #1a5c2a;
+  --table-border:      #c9a84c;
+  --table-pattern:     rgba(255,255,255,0.04);
+
+  /* ── Card Colors ── */
+  --card-red:     #cc2200;
+  --card-black:   #111111;
+  --card-bg:      #fdfdf5;
+  --card-border:  #d4c8a0;
+  --card-shadow:  rgba(0,0,0,0.35);
+  --card-radius:  8px;
+
+  /* ── UI Colors ── */
+  --gold:         #c9a84c;
+  --gold-light:   #f0d070;
+  --gold-dark:    #7a5f20;
+  --accent:       #e8c84a;
+  --danger:       #cc2200;
+  --safe:         #27ae60;
+  --text-primary: #f0e8d0;
+  --text-muted:   #a09070;
+  --bg-dark:      rgba(0,0,0,0.75);
+  --bg-panel:     rgba(10,20,10,0.92);
+
+  /* ── Typography ── */
+  --font-title:   'Cinzel Decorative', serif;
+  --font-heading: 'Cinzel', serif;
+  --font-body:    'Rajdhani', sans-serif;
+
+  /* ── Spacing / Sizing ── */
+  --hud-height:   52px;
+  --hand-height:  180px;
+  --action-height: 70px;
+  --radius-sm:    6px;
+  --radius-md:    12px;
+  --radius-lg:    20px;
+
+  /* ── Transitions ── */
+  --t-fast:  0.15s ease;
+  --t-med:   0.3s ease;
+  --t-slow:  0.5s ease;
+  /* ── Felt Gradients & Theme Defaults ── */
+  --felt-gradient: radial-gradient(ellipse at 50% 50%, #2a8040 0%, #1a5c2a 40%, #0f3518 80%, #061a0b 100%);
+  --felt-accent:   #2a8040;
+}
+
+/* ── Theme overrides ── */
+body[data-theme="green"] {
+  --table-color:   #1a5c2a;
+  --table-border:  #c9a84c;
+  --felt-gradient: radial-gradient(ellipse at 50% 50%, #2a8040 0%, #1a5c2a 40%, #0f3518 80%, #061a0b 100%);
+  --felt-accent:   #2a8040;
+}
+body[data-theme="blue"] {
+  --table-color:   #1a2f5c;
+  --table-border:  #6aaed6;
+  --felt-gradient: radial-gradient(ellipse at 50% 50%, #2a4a80 0%, #1a2f5c 40%, #0f1c38 80%, #060b18 100%);
+  --felt-accent:   #2a4a80;
+}
+body[data-theme="red"] {
+  --table-color:   #5c1a1a;
+  --table-border:  #c9846c;
+  --felt-gradient: radial-gradient(ellipse at 50% 50%, #802a2a 0%, #5c1a1a 40%, #380f0f 80%, #180606 100%);
+  --felt-accent:   #802a2a;
+}
+body[data-theme="dark"] {
+  --table-color:   #1a1a2e;
+  --table-border:  #8888cc;
+  --felt-gradient: radial-gradient(ellipse at 50% 50%, #2a2a40 0%, #1a1a2e 40%, #10101d 80%, #08080f 100%);
+  --felt-accent:   #2a2a40;
+}
+
+/* ── CSS Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--font-body);
+  font-size: 16px;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+button {
+  cursor: pointer;
+  border: none;
+  background: none;
+  font-family: var(--font-body);
+}
+
+input {
+  font-family: var(--font-body);
+}
+
+/* ── Screen System ── */
+.screen {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: opacity var(--t-med), transform var(--t-med);
+  will-change: opacity, transform;
+}
+
+.screen.active {
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  transform: translateX(0);
+  pointer-events: all;
+}
+
+.screen.hidden {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Toast Notifications ── */
+.toast-container {
+  position: fixed;
+  bottom: calc(var(--hand-height) + var(--action-height) + 16px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: rgba(10,20,10,0.95);
+  border: 1px solid var(--gold);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 600;
+  padding: 10px 20px;
+  text-align: center;
+  white-space: nowrap;
+  animation: toastIn 0.3s ease, toastOut 0.4s ease 2.6s forwards;
+}
+
+.toast.toast-error     { border-color: var(--danger); color: #ff8888; }
+.toast.toast-success   { border-color: var(--safe);   color: #88ffaa; }
+.toast.toast-attack    { border-color: var(--danger);  background: rgba(80,0,0,0.95); font-size: 1.1rem; }
+.toast.toast-departure {
+  border-color: var(--gold);
+  background: rgba(20, 15, 10, 0.96);
+  color: #ffeedd;
+  font-size: 0.95rem;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+  animation: toastIn 0.3s ease, toastOut 0.4s ease 4.6s forwards;
+}
+
+/* ── Player Status Indicators ── */
+.player-status-dot {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  vertical-align: middle;
+  flex-shrink: 0;
+  transition: background-color var(--t-fast), box-shadow var(--t-fast);
+}
+
+.player-status-dot.status-connected {
+  background-color: #2ecc71;
+  box-shadow: 0 0 7px rgba(46, 204, 113, 0.8);
+}
+
+.player-status-dot.status-reconnecting {
+  background-color: #f1c40f;
+  box-shadow: 0 0 7px rgba(241, 196, 15, 0.8);
+  animation: pulseYellow 0.9s infinite alternate;
+}
+
+.player-status-dot.status-disconnected,
+.player-status-dot.status-left {
+  background-color: #e74c3c;
+  box-shadow: 0 0 7px rgba(231, 76, 60, 0.8);
+}
+
+@keyframes pulseYellow {
+  from { opacity: 0.4; transform: scale(0.85); }
+  to   { opacity: 1.0; transform: scale(1.15); }
+}
+
+@keyframes toastIn  { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+@keyframes toastOut { from { opacity:1; } to { opacity:0; transform:translateY(-8px); } }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: rgba(255,255,255,0.05); }
+::-webkit-scrollbar-thumb { background: var(--gold-dark); border-radius: 3px; }
