@@ -1,5 +1,12 @@
 # 🃏 KAZHUDHAI CLUB
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)](https://kazhudhai-club.onrender.com)
+[![Status](https://img.shields.io/badge/Status-Online%20%E2%9C%94-brightgreen?style=for-the-badge)](https://kazhudhai-club.onrender.com)
+[![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791?style=for-the-badge&logo=postgresql&logoColor=white)](https://www.postgresql.org/)
+
+🎮 **Play Live Now:** **[https://kazhudhai-club.onrender.com](https://kazhudhai-club.onrender.com)**
+
 > **"The Last Card Loses. The Last Player Holding Cards Becomes KAZHUDHAI."**
 
 **KAZHUDHAI CLUB** is a realistic, authoritative full-stack multiplayer card game built with a modern web frontend (HTML5/CSS3/ES6+ JavaScript) and a Python backend (Flask & Flask-SocketIO). It supports both full **Offline play against AI opponents** and real-time **Online multiplayer with private rooms and public lobbies**.
@@ -191,13 +198,19 @@ pip install waitress
 waitress-serve --port=5000 wsgi:app
 ```
 
-### 2. Gunicorn + Eventlet (Linux / Docker / Cloud)
+### 2. Gunicorn + Threaded Workers (Linux / Render / Cloud)
 ```bash
-gunicorn --worker-class eventlet -w 1 --bind 0.0.0.0:$PORT wsgi:app
+gunicorn --worker-class gthread --workers 1 --threads 100 --bind 0.0.0.0:$PORT --chdir backend wsgi:app
 ```
 
-### 3. Database Migration
-By default, SQLite is used locally. To connect to PostgreSQL on platforms like Railway, Render, or Heroku, provide the connection string via environment variable:
+### 3. Production Deployment on Render
+- **Public URL**: [https://kazhudhai-club.onrender.com](https://kazhudhai-club.onrender.com)
+- **Engine**: Python 3.11 with Gunicorn (`gthread` + `simple-websocket`)
+- **Database**: Managed PostgreSQL on Render
+- **Health Check**: `https://kazhudhai-club.onrender.com/api/health`
+
+### 4. Database Configuration
+By default, SQLite is used locally. In production on Render, PostgreSQL connectivity is automatically configured:
 ```bash
 DATABASE_URL="postgresql://user:password@host:port/dbname"
 ```
