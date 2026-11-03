@@ -926,6 +926,8 @@
   gap: 12px;
   padding: 6px 12px 8px;
   height: var(--action-height);
+  position: relative;
+  z-index: 60;
 }
 
 .play-btn {
@@ -940,6 +942,12 @@
   border-radius: var(--radius-sm);
   transition: all var(--t-fast);
   text-transform: uppercase;
+  position: relative;
+  z-index: 65;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
 }
 
 .play-btn:hover:not(:disabled) {

@@ -67,6 +67,17 @@ const App = (() => {
     }
   }
 
+  // ── Authoritative check if it is the local player's turn ──
+  function isCurrentPlayerTurn() {
+    const state = GameClient.getState();
+    if (!state || state.status !== 'playing') return false;
+    const myId = _isOffline ? 'human' : OnlineClient.getPlayerId();
+    if (state.current_player_id && myId && state.current_player_id === myId) {
+      return true;
+    }
+    return !!state.is_my_turn;
+  }
+
   function init() {
     Screens.go('screen-menu');
     MenuUI.init();
@@ -286,13 +297,33 @@ const App = (() => {
   }
 
   async function playCard(cardId) {
-    if (!GameClient.isActive() || _isRoundPaused) return;
-    const state = GameClient.getState();
-    if (!state.is_my_turn) return;
+    if (!cardId || !GameClient.isActive()) {
+      if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+        TableUI.resetPlayInFlight();
+      }
+      return;
+    }
+
+    const isMyTurn = isCurrentPlayerTurn();
+    if (!isMyTurn) {
+      if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+        TableUI.resetPlayInFlight();
+      }
+      return;
+    }
 
     if (!_isOffline) {
-      // Online mode: emit to server
+      // Online mode: clean up any stale resolution pause and emit to authoritative server
+      _isRoundPaused = false;
+      _clearRoundTimer();
       OnlineClient.playCard(cardId);
+      return;
+    }
+
+    if (_isRoundPaused) {
+      if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+        TableUI.resetPlayInFlight();
+      }
       return;
     }
 
@@ -437,8 +468,8 @@ const App = (() => {
     if (!state) return;
 
     // Normalize opponents list for both offline and online modes
+    const myId = _isOffline ? 'human' : OnlineClient.getPlayerId();
     if (!state.opponents && state.players) {
-      const myId = _isOffline ? 'human' : OnlineClient.getPlayerId();
       state.opponents = state.players.filter(p => p.id !== myId);
       const me = state.players.find(p => p.id === myId);
       if (me) {
@@ -450,12 +481,16 @@ const App = (() => {
     // Opponents
     TableUI.renderOpponents(state.opponents || []);
 
-    // Turn info
-    const isMyTurn = !!state.is_my_turn;
+    // Authoritative turn calculation comparing current_player_id to local player ID
+    const isMyTurn = (state.current_player_id && myId)
+      ? (state.current_player_id === myId)
+      : !!state.is_my_turn;
+    state.is_my_turn = isMyTurn;
+
     const currentOpp = (state.opponents || []).find(o => o.id === state.current_player_id);
     const currentName = isMyTurn ? (state.player_name || 'You') : (currentOpp ? currentOpp.name : 'Opponent');
 
-    TableUI.setTurn(isMyTurn ? 'Your' : `${currentName}'s`);
+    TableUI.setTurn(isMyTurn ? 'Your' : `${currentName}'s`, isMyTurn);
 
     if (isMyTurn) {
       if (state.legal_suit) {
@@ -470,15 +505,15 @@ const App = (() => {
     // Common pile
     TableUI.updateCommonPile(state.common_pile_count || 0);
 
-    // Human hand
+    // Human hand - always pass the authoritative isMyTurn
     TableUI.renderHand(
       state.my_hand || [],
       state.legal_suit || null,
-      isMyTurn && !_isRoundPaused
+      isMyTurn
     );
 
     // Check for game end
-    if (state.status === 'finished' && !_isRoundPaused) {
+    if (state.status === 'finished') {
       setTimeout(() => _showResults(state), 1400);
     }
   }
@@ -539,7 +574,8 @@ const App = (() => {
       _renderActivityLog(state.activity_log);
     }
     // If it's my turn, ensure paused round state and play locks are cleanly released
-    if (state.is_my_turn) {
+    const myTurn = isCurrentPlayerTurn();
+    if (myTurn) {
       _clearRoundTimer();
       _isRoundPaused = false;
       if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
@@ -639,6 +675,9 @@ const App = (() => {
       }
       _isRoundPaused = false;
       _roundResolutionTimer = null;
+      if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+        TableUI.resetPlayInFlight();
+      }
       const state = GameClient.getState();
       if (state) _renderState(state);
     }, 1800);
@@ -678,6 +717,7 @@ const App = (() => {
     init,
     startOfflineGame,
     playCard,
+    isCurrentPlayerTurn,
     createOnlineRoom,
     joinOnlineRoom,
     renderOnlineState,

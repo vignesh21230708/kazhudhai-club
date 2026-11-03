@@ -736,7 +736,7 @@
 
   .play-btn {
     flex: 1;
-    min-height: 40px;
+    min-height: 44px;
     padding: 6px 12px;
     font-size: 0.82rem;
     font-weight: 800;
@@ -745,6 +745,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
   }
 
   .action-hint {

@@ -43,6 +43,16 @@ const TableUI = (() => {
   let _legalSuit = null; // null = any card OK; 'S'/'H'/etc = must follow suit
   let _isMyTurn  = false;
 
+  // ── Authoritative helper to determine whether it is the local player's turn ──
+  function _getIsMyTurn() {
+    if (typeof App !== 'undefined' && typeof App.isCurrentPlayerTurn === 'function') {
+      const activeTurn = App.isCurrentPlayerTurn();
+      if (activeTurn) _isMyTurn = true;
+      return activeTurn;
+    }
+    return !!_isMyTurn;
+  }
+
   // ── Defensive helper to get safe numeric card count ──
   function _getCardCount(player) {
     if (!player) return 0;
@@ -174,16 +184,26 @@ const TableUI = (() => {
       });
     }
 
-    // Play button
+    // Play button - support both click and touch on mobile devices
     if (DOM.playBtn) {
-      DOM.playBtn.addEventListener('click', () => {
+      const handlePlayBtn = (e) => {
+        if (e && typeof e.preventDefault === 'function') {
+          e.preventDefault();
+        }
         _playSelectedCard();
-      });
+      };
+      DOM.playBtn.addEventListener('click', handlePlayBtn);
+      DOM.playBtn.addEventListener('touchend', handlePlayBtn);
     }
   }
 
   function _playSelectedCard() {
-    if (_isPlayInFlight || !_selectedCardId || !_isMyTurn) return;
+    if (_isPlayInFlight) return;
+    const myTurn = _getIsMyTurn();
+    if (!myTurn || !_selectedCardId) {
+      _updateActionBar(myTurn, _legalSuit);
+      return;
+    }
 
     const cardToPlay = _selectedCardId;
     _isPlayInFlight = true;
@@ -197,11 +217,18 @@ const TableUI = (() => {
 
     Sound.click();
     App.playCard(cardToPlay);
+
+    // Timeout safety fallback: prevent in-flight lock from getting stuck if network stalls
+    setTimeout(() => {
+      if (_isPlayInFlight) {
+        resetPlayInFlight();
+      }
+    }, 3500);
   }
 
   function resetPlayInFlight() {
     _isPlayInFlight = false;
-    _updateActionBar(_isMyTurn, _legalSuit);
+    _updateActionBar(_getIsMyTurn(), _legalSuit);
   }
 
   // ── Render opponents around the table ──
@@ -415,16 +442,17 @@ const TableUI = (() => {
    * @param {boolean} isMyTurn     - Whether it is this player's turn
    */
   function renderHand(hand, legalSuit, isMyTurn) {
+    const prevSelectedId = _selectedCardId;
     _myHand    = hand || [];
     _legalSuit = legalSuit;
-    _isMyTurn  = isMyTurn;
-    _selectedCardId = null;
+    _isMyTurn  = (typeof isMyTurn === 'boolean') ? isMyTurn : _getIsMyTurn();
     _isPlayInFlight = false;
 
     DOM.handRow.innerHTML = '';
     DOM.selfCardCount.textContent = _formatCardCountText({ cardCount: _myHand.length });
 
     if (_myHand.length === 0) {
+      _selectedCardId = null;
       DOM.handRow.innerHTML = '<div class="empty-zone-hint" style="color:#55dd88; font-weight:700; font-size:0.9rem; padding: 20px 0;">🎉 You emptied your hand and are SAFE! Watching remaining players…</div>';
       DOM.selfAvatar.classList.add('safe');
       if (!DOM.selfAvatar.querySelector('.opponent-safe-badge')) {
@@ -502,47 +530,82 @@ const TableUI = (() => {
     }
 
     const cardEls = [];
+    let preservedSelection = false;
+
     sortedHand.forEach(card => {
-      const isLegal = isMyTurn ? _isCardLegal(card, legalSuit, sortedHand) : true;
+      const isLegal = _isMyTurn ? _isCardLegal(card, legalSuit, sortedHand) : true;
+      const isSelected = prevSelectedId && String(card.id) === String(prevSelectedId);
+
+      if (isSelected && isLegal) {
+        preservedSelection = true;
+        _selectedCardId = card.id;
+      }
+
       const cardEl  = CardRenderer.createFaceUp(card, {
         selectable: true,
-        selected: false,
+        selected: isSelected && isLegal,
         legal: isLegal,
       });
       cardEl.classList.toggle('hand-card', true);
-      cardEl.classList.toggle('illegal', isMyTurn && !isLegal);
+      cardEl.classList.toggle('illegal', _isMyTurn && !isLegal);
 
       // Card tap listener
-      cardEl.addEventListener('click', () => _onCardClick(card.id, cardEl));
+      cardEl.addEventListener('click', (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        _onCardClick(card.id, cardEl);
+      });
 
       DOM.handRow.appendChild(cardEl);
       cardEls.push(cardEl);
     });
+
+    if (!preservedSelection) {
+      _selectedCardId = null;
+    }
 
     if (_isFirstDeal && Storage.getSettings().animations) {
       Animations.dealHand(cardEls, 30);
     }
     _isFirstDeal = false;
 
-    _updateActionBar(isMyTurn, legalSuit);
+    _updateActionBar(_isMyTurn, legalSuit);
   }
 
   function _isCardLegal(card, legalSuit, hand) {
+    if (!card) return false;
     if (!legalSuit) return true; // First card of round: any card is legal
+    const cardSuit = String(card.suit || '').toUpperCase();
+    const targetSuit = String(legalSuit || '').toUpperCase();
+    if (!targetSuit) return true;
+    if (!Array.isArray(hand) || hand.length === 0) return true;
+
     // Has the starting suit? Must follow it
-    const hasSuit = hand.some(c => c.suit === legalSuit);
-    if (hasSuit) return card.suit === legalSuit;
+    const hasSuit = hand.some(c => c && String(c.suit || '').toUpperCase() === targetSuit);
+    if (hasSuit) return cardSuit === targetSuit;
     return true; // Doesn't have suit → any card is legal (attack)
   }
 
   function _onCardClick(cardId, cardEl) {
     if (_isPlayInFlight) return;
 
+    const myTurn = _getIsMyTurn();
+    _isMyTurn = myTurn;
+
+    const cardIdStr = String(cardId || cardEl.dataset.cardId || '');
+    let cardObj = _myHand.find(c => String(c.id) === cardIdStr);
+    if (!cardObj && cardEl.dataset.suit) {
+      cardObj = {
+        id: cardIdStr,
+        rank: cardEl.dataset.rank,
+        suit: cardEl.dataset.suit,
+      };
+    }
+
+    const isLegal = myTurn && cardObj ? _isCardLegal(cardObj, _legalSuit, _myHand) : false;
+
     // Deselect or direct-play if clicking already-selected card
-    if (_selectedCardId === cardId) {
-      const cardObj = _myHand.find(c => c.id === cardId);
-      const isLegal = _isMyTurn && cardObj ? _isCardLegal(cardObj, _legalSuit, _myHand) : false;
-      if (_isMyTurn && isLegal && !_isPlayInFlight) {
+    if (_selectedCardId === cardIdStr) {
+      if (myTurn && isLegal && !_isPlayInFlight) {
         // Direct play on double-tap: rapid and natural on Android touchscreens
         _playSelectedCard();
         return;
@@ -558,14 +621,13 @@ const TableUI = (() => {
     // Deselect previous
     DOM.handRow.querySelectorAll('.hand-card.selected').forEach(el => el.classList.remove('selected'));
 
-    _selectedCardId = cardId;
+    _selectedCardId = cardIdStr;
     cardEl.classList.add('selected');
     Sound.click();
 
     // Check legality: play button is only active when it is my turn AND card is legal AND not in flight
-    const cardObj = _myHand.find(c => c.id === cardId);
-    const isLegal = _isMyTurn && cardObj ? _isCardLegal(cardObj, _legalSuit, _myHand) : false;
-    if (DOM.playBtn) DOM.playBtn.disabled = !_isMyTurn || !isLegal || _isPlayInFlight;
+    const btnDisabled = !myTurn || !isLegal || _isPlayInFlight;
+    if (DOM.playBtn) DOM.playBtn.disabled = btnDisabled;
 
     // Smoothly scroll the selected card into view if partially obscured on small screens
     if (typeof cardEl.scrollIntoView === 'function') {
@@ -574,9 +636,13 @@ const TableUI = (() => {
   }
 
   function _updateActionBar(isMyTurn, legalSuit) {
-    if (DOM.playBtn) DOM.playBtn.disabled = !isMyTurn || !_selectedCardId || _isPlayInFlight;
+    const myTurn = (typeof isMyTurn === 'boolean') ? isMyTurn : _getIsMyTurn();
+    const hasValidSelection = !!_selectedCardId;
+    if (DOM.playBtn) {
+      DOM.playBtn.disabled = !myTurn || !hasValidSelection || _isPlayInFlight;
+    }
 
-    if (!isMyTurn) {
+    if (!myTurn) {
       DOM.actionHint.textContent = 'Wait for your turn…';
       DOM.selfAvatar.classList.remove('active-turn');
     } else {
@@ -654,8 +720,17 @@ const TableUI = (() => {
   }
 
   // ── Update turn indicator ──
-  function setTurn(playerName) {
-    DOM.turnText.textContent = `${playerName}'s Turn`;
+  function setTurn(playerName, isMyTurn) {
+    if (playerName === 'Your' || playerName === 'You') {
+      DOM.turnText.textContent = 'Your Turn';
+    } else {
+      const cleanName = String(playerName || '').replace(/'s$/, '');
+      DOM.turnText.textContent = `${cleanName}'s Turn`;
+    }
+    if (typeof isMyTurn === 'boolean') {
+      _isMyTurn = isMyTurn;
+      _updateActionBar(_isMyTurn, _legalSuit);
+    }
   }
 
   // ── Self attack pile (cards won in attack) ──
