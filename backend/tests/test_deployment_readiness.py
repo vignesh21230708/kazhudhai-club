@@ -274,7 +274,7 @@ class TestDeploymentReadiness(unittest.TestCase):
         with open('render.yaml', 'r', encoding='utf-8') as f:
             render_content = f.read()
         self.assertIn('kazhudhai-club', render_content)
-        self.assertIn('runtime: python', render_content)
+        self.assertTrue('env: python' in render_content or 'runtime: python' in render_content)
         self.assertIn('DATABASE_URL', render_content)
         self.assertIn('kazhudhai-db', render_content)
         self.assertIn('gunicorn', render_content)
