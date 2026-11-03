@@ -103,7 +103,8 @@ const CardRenderer = (() => {
     const fan = document.createElement('div');
     fan.className = 'opponent-hand-fan';
 
-    const visible = Math.min(count, maxVisible);
+    const safeCount = (typeof count === 'number' && !isNaN(count) && count >= 0) ? count : 0;
+    const visible = Math.min(safeCount, maxVisible);
     for (let i = 0; i < visible; i++) {
       fan.appendChild(createSmallBack());
     }
@@ -143,7 +144,9 @@ const CardRenderer = (() => {
    * Returns a string label like "A♠" for a card object.
    */
   function cardLabel(card) {
-    return `${card.rank}${SUIT_SYMBOLS[card.suit]}`;
+    if (!card || typeof card !== 'object') return 'Card';
+    const sym = SUIT_SYMBOLS[card.suit] || card.suit || '';
+    return `${card.rank || ''}${sym}`;
   }
 
   return { createFaceUp, createFaceDown, createSmallBack, createOpponentFan, createPileVisual, suitSymbol, suitClass, cardLabel, sortHand };

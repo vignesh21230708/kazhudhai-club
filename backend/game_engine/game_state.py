@@ -137,6 +137,10 @@ class GameState:
         if player is None:
             raise ValueError("Player not found")
 
+        # Turn validation first: prevent stale or duplicate actions when not player's turn
+        if self.current_player is None or self.current_player.id != player.id:
+            raise ValueError("It is not this player's turn")
+
         card = self._get_card_from_hand(player, card_id)
         if card is None:
             raise ValueError("Card not in player's hand")
@@ -386,6 +390,13 @@ class GameState:
                     'is_attack':   entry['is_attack'],
                 })
 
+        players_data = []
+        for p in self.players:
+            pd = p.to_public_dict()
+            pd['is_active'] = bool(cp is not None and cp.id == p.id)
+            pd['isActive']  = pd['is_active']
+            players_data.append(pd)
+
         state = {
             'game_id':           self.game_id,
             'status':            self.status,
@@ -397,7 +408,7 @@ class GameState:
                 self.current_round and self.current_round.attacker_player) else None,
             'played_cards':      played_cards,
             'common_pile_count': len(self.common_pile),
-            'players':           [p.to_public_dict() for p in self.players],
+            'players':           players_data,
             'rankings':          self.rankings,
             'deck_count':        self.num_decks,
             'last_round_result': self.last_round_result,

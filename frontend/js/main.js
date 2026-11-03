@@ -55,9 +55,17 @@ const App = (() => {
   let _currentConfig   = null;
   let _isOffline       = true;
   let _aiStepTimeout   = null;
+  let _roundResolutionTimer = null;
   let _isStepping      = false;
   let _isRoundPaused   = false;
   let _unreadActivityCount = 0;
+
+  function _clearRoundTimer() {
+    if (_roundResolutionTimer) {
+      clearTimeout(_roundResolutionTimer);
+      _roundResolutionTimer = null;
+    }
+  }
 
   function init() {
     Screens.go('screen-menu');
@@ -530,6 +538,14 @@ const App = (() => {
     if (state.activity_log) {
       _renderActivityLog(state.activity_log);
     }
+    // If it's my turn, ensure paused round state and play locks are cleanly released
+    if (state.is_my_turn) {
+      _clearRoundTimer();
+      _isRoundPaused = false;
+      if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+        TableUI.resetPlayInFlight();
+      }
+    }
     _renderState(state);
     if (OnlineClient.getPlayerId()) {
       TableUI.updatePlayerStatus(OnlineClient.getPlayerId(), 'connected');
@@ -581,37 +597,48 @@ const App = (() => {
   }
 
   function handleOnlineRoundResolution(roundResult) {
+    _clearRoundTimer();
     _isRoundPaused = true;
 
-    if (roundResult.is_attack) {
-      TableUI.showAttackBanner(roundResult.attacker_name || 'Player');
-      Sound.attack();
-      Animations.screenShake();
-      Animations.flashAttack();
-      showToast(`ATTACK by ${roundResult.attacker_name}! ${roundResult.winner_name} takes all cards!`, 'attack', 3000);
-    } else {
-      TableUI.hideAttackBanner();
-      showToast(`${roundResult.winner_name} won the round with ${CardRenderer.cardLabel(roundResult.winning_card)}`, 'success', 2500);
+    try {
+      if (roundResult.is_attack) {
+        TableUI.showAttackBanner(roundResult.attacker_name || 'Player');
+        Sound.attack();
+        Animations.screenShake();
+        Animations.flashAttack();
+        showToast(`ATTACK by ${roundResult.attacker_name || 'Player'}! ${roundResult.winner_name || 'Player'} takes all cards!`, 'attack', 3000);
+      } else {
+        TableUI.hideAttackBanner();
+        const winningCardLabel = roundResult.winning_card ? CardRenderer.cardLabel(roundResult.winning_card) : 'winning card';
+        showToast(`${roundResult.winner_name || 'Player'} won the round with ${winningCardLabel}`, 'success', 2500);
+      }
+
+      const myId = OnlineClient.getPlayerId();
+      if (roundResult.winner_id === myId) {
+        TableUI.flashSelfAvatar(roundResult.is_attack ? 'rgba(255,80,80,0.8)' : 'rgba(80,255,80,0.8)');
+      } else if (roundResult.winner_id) {
+        TableUI.flashOpponentAvatar(roundResult.winner_id, roundResult.is_attack ? 'rgba(255,80,80,0.8)' : 'rgba(80,255,80,0.8)');
+      }
+
+      if (roundResult.eliminated_players && roundResult.eliminated_players.length > 0) {
+        roundResult.eliminated_players.forEach(name => {
+          Sound.playerFinish();
+          showToast(`🎉 ${name} played their last card and is SAFE!`, 'success', 3500);
+        });
+      }
+    } catch (err) {
+      console.warn('[App] handleOnlineRoundResolution animation error:', err);
     }
 
-    const myId = OnlineClient.getPlayerId();
-    if (roundResult.winner_id === myId) {
-      TableUI.flashSelfAvatar(roundResult.is_attack ? 'rgba(255,80,80,0.8)' : 'rgba(80,255,80,0.8)');
-    } else {
-      TableUI.flashOpponentAvatar(roundResult.winner_id, roundResult.is_attack ? 'rgba(255,80,80,0.8)' : 'rgba(80,255,80,0.8)');
-    }
-
-    if (roundResult.eliminated_players && roundResult.eliminated_players.length > 0) {
-      roundResult.eliminated_players.forEach(name => {
-        Sound.playerFinish();
-        showToast(`🎉 ${name} played their last card and is SAFE!`, 'success', 3500);
-      });
-    }
-
-    setTimeout(() => {
-      TableUI.clearPlayedCards(true);
-      TableUI.hideAttackBanner();
+    _roundResolutionTimer = setTimeout(() => {
+      try {
+        TableUI.clearPlayedCards(true);
+        TableUI.hideAttackBanner();
+      } catch (e) {
+        console.warn('[App] clearPlayedCards error:', e);
+      }
       _isRoundPaused = false;
+      _roundResolutionTimer = null;
       const state = GameClient.getState();
       if (state) _renderState(state);
     }, 1800);
@@ -625,7 +652,11 @@ const App = (() => {
 
   function exitToMenu() {
     _clearAiTimeout();
+    _clearRoundTimer();
     _isRoundPaused = false;
+    if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+      TableUI.resetPlayInFlight();
+    }
     closeActivityDrawer();
     _unreadActivityCount = 0;
     _updateActivityBadge();
@@ -638,6 +669,8 @@ const App = (() => {
   function restartGame() {
     if (_isOffline && _currentConfig) {
       startOfflineGame(_currentConfig);
+    } else if (!_isOffline) {
+      OnlineClient.restartGame();
     }
   }
 

@@ -315,7 +315,23 @@ def register_socket_events(socketio):
 
             return {'success': True}
         except Exception as e:
+            # Re-emit authoritative personalized state to resynchronize player hand immediately
+            if room and room.game_state and player_id:
+                try:
+                    emit('game_state', room.game_state.get_state_for_player(player_id))
+                except Exception:
+                    pass
             return {'success': False, 'message': str(e)}
+
+    @socketio.on('get_room_state')
+    def handle_get_room_state(data):
+        room_code = (data.get('roomCode') or '').strip().upper()
+        player_id = data.get('playerId')
+        room = room_manager.get_room(room_code)
+        if room and room.game_state and player_id:
+            emit('game_state', room.game_state.get_state_for_player(player_id))
+            return {'success': True}
+        return {'success': False, 'message': 'Room not found'}
 
     @socketio.on('get_public_rooms')
     def handle_get_public_rooms():

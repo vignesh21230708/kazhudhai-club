@@ -31,13 +31,42 @@ const TableUI = (() => {
     DOM.playBtn        = document.getElementById('btn-play-card');
     DOM.actionHint     = document.getElementById('action-hint');
     DOM.ingameMenu     = document.getElementById('ingame-menu');
+    DOM.menuBackdrop   = document.getElementById('ingame-menu-backdrop');
     DOM.confirmExit    = document.getElementById('confirm-exit');
   }
 
+  let _eventsBound = false;
+  let _isPlayInFlight = false;
+  let _isFirstDeal = true;
   let _selectedCardId = null;
   let _myHand = [];     // Array of card objects { id, rank, suit }
   let _legalSuit = null; // null = any card OK; 'S'/'H'/etc = must follow suit
   let _isMyTurn  = false;
+
+  // ── Defensive helper to get safe numeric card count ──
+  function _getCardCount(player) {
+    if (!player) return 0;
+    if (typeof player.cardCount === 'number') return player.cardCount;
+    if (typeof player.card_count === 'number') return player.card_count;
+    if (Array.isArray(player.hand)) return player.hand.length;
+    return 0;
+  }
+
+  function _formatCardCountText(player) {
+    const count = _getCardCount(player);
+    return `${count} ${count === 1 ? 'card' : 'cards'}`;
+  }
+
+  // ── In-game slide-out menu controls ──
+  function openInGameMenu() {
+    if (DOM.ingameMenu) DOM.ingameMenu.classList.remove('hidden');
+    if (DOM.menuBackdrop) DOM.menuBackdrop.classList.remove('hidden');
+  }
+
+  function closeInGameMenu() {
+    if (DOM.ingameMenu) DOM.ingameMenu.classList.add('hidden');
+    if (DOM.menuBackdrop) DOM.menuBackdrop.classList.add('hidden');
+  }
 
   // ── Initialise the table for a new game ──
   function init(gameConfig) {
@@ -46,6 +75,9 @@ const TableUI = (() => {
     _myHand = [];
     _legalSuit = null;
     _isMyTurn = false;
+    _isPlayInFlight = false;
+    _isFirstDeal = true;
+    closeInGameMenu();
 
     DOM.hudRoomCode.textContent  = gameConfig.roomCode  || 'OFFLINE';
     DOM.hudDeckCount.textContent = gameConfig.deckCount || '?';
@@ -59,46 +91,117 @@ const TableUI = (() => {
   }
 
   function _bindTableEvents() {
-    // HUD menu button
-    document.getElementById('btn-menu-game').addEventListener('click', () => {
-      Sound.click();
-      DOM.ingameMenu.classList.toggle('hidden');
-    });
+    if (_eventsBound) return;
+    _eventsBound = true;
 
-    document.getElementById('btn-close-ingame-menu').addEventListener('click', () => {
-      Sound.click();
-      DOM.ingameMenu.classList.add('hidden');
-    });
+    // HUD menu button (hamburger ☰)
+    const menuBtn = document.getElementById('btn-menu-game');
+    if (menuBtn) {
+      menuBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Sound.click();
+        if (DOM.ingameMenu && DOM.ingameMenu.classList.contains('hidden')) {
+          openInGameMenu();
+        } else {
+          closeInGameMenu();
+        }
+      });
+    }
 
-    // Exit
-    document.getElementById('btn-exit-game').addEventListener('click', () => {
-      DOM.ingameMenu.classList.add('hidden');
-      DOM.confirmExit.classList.remove('hidden');
-    });
+    // In-game menu close button (✕)
+    const closeBtn = document.getElementById('btn-close-ingame-menu');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        Sound.click();
+        closeInGameMenu();
+      });
+    }
 
-    document.getElementById('btn-cancel-exit').addEventListener('click', () => {
-      DOM.confirmExit.classList.add('hidden');
-    });
+    // Backdrop overlay click
+    if (DOM.menuBackdrop) {
+      DOM.menuBackdrop.addEventListener('click', () => {
+        closeInGameMenu();
+      });
+    }
 
-    document.getElementById('btn-confirm-exit').addEventListener('click', () => {
-      DOM.confirmExit.classList.add('hidden');
-      Sound.click();
-      App.exitToMenu();
-    });
+    // Rules & Settings buttons in menu
+    const rulesBtn = document.getElementById('btn-rules-ingame');
+    if (rulesBtn) {
+      rulesBtn.addEventListener('click', () => {
+        closeInGameMenu();
+      });
+    }
+    const settingsBtn = document.getElementById('btn-settings-ingame');
+    if (settingsBtn) {
+      settingsBtn.addEventListener('click', () => {
+        closeInGameMenu();
+      });
+    }
+
+    // Exit confirmation
+    const exitBtn = document.getElementById('btn-exit-game');
+    if (exitBtn) {
+      exitBtn.addEventListener('click', () => {
+        closeInGameMenu();
+        if (DOM.confirmExit) DOM.confirmExit.classList.remove('hidden');
+      });
+    }
+
+    const cancelExitBtn = document.getElementById('btn-cancel-exit');
+    if (cancelExitBtn) {
+      cancelExitBtn.addEventListener('click', () => {
+        if (DOM.confirmExit) DOM.confirmExit.classList.add('hidden');
+      });
+    }
+
+    const confirmExitBtn = document.getElementById('btn-confirm-exit');
+    if (confirmExitBtn) {
+      confirmExitBtn.addEventListener('click', () => {
+        if (DOM.confirmExit) DOM.confirmExit.classList.add('hidden');
+        Sound.click();
+        App.exitToMenu();
+      });
+    }
 
     // Restart
-    document.getElementById('btn-restart-game').addEventListener('click', () => {
-      DOM.ingameMenu.classList.add('hidden');
-      Sound.click();
-      App.restartGame();
-    });
+    const restartBtn = document.getElementById('btn-restart-game');
+    if (restartBtn) {
+      restartBtn.addEventListener('click', () => {
+        closeInGameMenu();
+        Sound.click();
+        App.restartGame();
+      });
+    }
 
     // Play button
-    DOM.playBtn.addEventListener('click', () => {
-      if (!_selectedCardId || !_isMyTurn) return;
-      Sound.click();
-      App.playCard(_selectedCardId);
-    });
+    if (DOM.playBtn) {
+      DOM.playBtn.addEventListener('click', () => {
+        _playSelectedCard();
+      });
+    }
+  }
+
+  function _playSelectedCard() {
+    if (_isPlayInFlight || !_selectedCardId || !_isMyTurn) return;
+
+    const cardToPlay = _selectedCardId;
+    _isPlayInFlight = true;
+    if (DOM.playBtn) DOM.playBtn.disabled = true;
+    _selectedCardId = null;
+
+    // Clear selection visual state
+    if (DOM.handRow) {
+      DOM.handRow.querySelectorAll('.hand-card.selected').forEach(el => el.classList.remove('selected'));
+    }
+
+    Sound.click();
+    App.playCard(cardToPlay);
+  }
+
+  function resetPlayInFlight() {
+    _isPlayInFlight = false;
+    _updateActionBar(_isMyTurn, _legalSuit);
   }
 
   // ── Render opponents around the table ──
@@ -224,27 +327,29 @@ const TableUI = (() => {
     nameEl.appendChild(statusDot);
     nameEl.appendChild(nameText);
 
+    const cardCount = _getCardCount(opp);
     const countEl = document.createElement('div');
     countEl.className = 'opponent-card-count';
     countEl.id = `opp-count-${opp.id}`;
-    countEl.textContent = `${opp.cardCount} cards`;
+    countEl.textContent = _formatCardCountText(opp);
 
     // Fan of card backs
-    const fan = CardRenderer.createOpponentFan(opp.cardCount);
+    const fan = CardRenderer.createOpponentFan(cardCount);
     fan.id = `opp-fan-${opp.id}`;
 
     slot.appendChild(avatar);
     slot.appendChild(nameEl);
     slot.appendChild(countEl);
-    if (opp.cardCount > 0) slot.appendChild(fan);
+    if (cardCount > 0) slot.appendChild(fan);
 
     return slot;
   }
 
   // ── Update one opponent's card count and turn state ──
   function updateOpponent(opp) {
+    const cardCount = _getCardCount(opp);
     const countEl = document.getElementById(`opp-count-${opp.id}`);
-    if (countEl) countEl.textContent = `${opp.cardCount} cards`;
+    if (countEl) countEl.textContent = _formatCardCountText(opp);
 
     const avatarEl = document.getElementById(`opp-avatar-${opp.id}`);
     if (avatarEl) {
@@ -261,7 +366,7 @@ const TableUI = (() => {
 
     const fan = document.getElementById(`opp-fan-${opp.id}`);
     if (fan) {
-      const newFan = CardRenderer.createOpponentFan(opp.cardCount);
+      const newFan = CardRenderer.createOpponentFan(cardCount);
       newFan.id = fan.id;
       fan.replaceWith(newFan);
     }
@@ -310,15 +415,16 @@ const TableUI = (() => {
    * @param {boolean} isMyTurn     - Whether it is this player's turn
    */
   function renderHand(hand, legalSuit, isMyTurn) {
-    _myHand    = hand;
+    _myHand    = hand || [];
     _legalSuit = legalSuit;
     _isMyTurn  = isMyTurn;
     _selectedCardId = null;
+    _isPlayInFlight = false;
 
     DOM.handRow.innerHTML = '';
-    DOM.selfCardCount.textContent = hand.length;
+    DOM.selfCardCount.textContent = _formatCardCountText({ cardCount: _myHand.length });
 
-    if (hand.length === 0) {
+    if (_myHand.length === 0) {
       DOM.handRow.innerHTML = '<div class="empty-zone-hint" style="color:#55dd88; font-weight:700; font-size:0.9rem; padding: 20px 0;">🎉 You emptied your hand and are SAFE! Watching remaining players…</div>';
       DOM.selfAvatar.classList.add('safe');
       if (!DOM.selfAvatar.querySelector('.opponent-safe-badge')) {
@@ -349,7 +455,7 @@ const TableUI = (() => {
 
     // Automatically sort human player's visible hand:
     // Group by suit (♠, ♥, ♦, ♣) and descending rank (A down to 2)
-    const sortedHand = CardRenderer.sortHand(hand);
+    const sortedHand = CardRenderer.sortHand(_myHand);
     _myHand = sortedHand;
 
     // Responsive horizontal spacing:
@@ -413,9 +519,10 @@ const TableUI = (() => {
       cardEls.push(cardEl);
     });
 
-    if (Storage.getSettings().animations) {
+    if (_isFirstDeal && Storage.getSettings().animations) {
       Animations.dealHand(cardEls, 30);
     }
+    _isFirstDeal = false;
 
     _updateActionBar(isMyTurn, legalSuit);
   }
@@ -429,11 +536,22 @@ const TableUI = (() => {
   }
 
   function _onCardClick(cardId, cardEl) {
-    // Deselect if clicking already-selected
+    if (_isPlayInFlight) return;
+
+    // Deselect or direct-play if clicking already-selected card
     if (_selectedCardId === cardId) {
+      const cardObj = _myHand.find(c => c.id === cardId);
+      const isLegal = _isMyTurn && cardObj ? _isCardLegal(cardObj, _legalSuit, _myHand) : false;
+      if (_isMyTurn && isLegal && !_isPlayInFlight) {
+        // Direct play on double-tap: rapid and natural on Android touchscreens
+        _playSelectedCard();
+        return;
+      }
+
+      // If not legal or not player's turn, simply deselect
       _selectedCardId = null;
       cardEl.classList.remove('selected');
-      DOM.playBtn.disabled = true;
+      if (DOM.playBtn) DOM.playBtn.disabled = true;
       return;
     }
 
@@ -444,10 +562,10 @@ const TableUI = (() => {
     cardEl.classList.add('selected');
     Sound.click();
 
-    // Check legality: play button is only active when it is my turn AND card is legal
+    // Check legality: play button is only active when it is my turn AND card is legal AND not in flight
     const cardObj = _myHand.find(c => c.id === cardId);
     const isLegal = _isMyTurn && cardObj ? _isCardLegal(cardObj, _legalSuit, _myHand) : false;
-    DOM.playBtn.disabled = !_isMyTurn || !isLegal;
+    if (DOM.playBtn) DOM.playBtn.disabled = !_isMyTurn || !isLegal || _isPlayInFlight;
 
     // Smoothly scroll the selected card into view if partially obscured on small screens
     if (typeof cardEl.scrollIntoView === 'function') {
@@ -456,7 +574,7 @@ const TableUI = (() => {
   }
 
   function _updateActionBar(isMyTurn, legalSuit) {
-    DOM.playBtn.disabled = !isMyTurn || !_selectedCardId;
+    if (DOM.playBtn) DOM.playBtn.disabled = !isMyTurn || !_selectedCardId || _isPlayInFlight;
 
     if (!isMyTurn) {
       DOM.actionHint.textContent = 'Wait for your turn…';
@@ -576,5 +694,8 @@ const TableUI = (() => {
     flashOpponentAvatar,
     flashSelfAvatar,
     updatePlayerStatus,
+    openInGameMenu,
+    closeInGameMenu,
+    resetPlayInFlight,
   };
 })();

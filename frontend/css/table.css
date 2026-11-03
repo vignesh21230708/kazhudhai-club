@@ -35,8 +35,17 @@
 .hud-btn {
   color: var(--gold);
   font-size: 1.4rem;
-  padding: 6px 10px;
+  padding: 6px 12px;
+  min-width: 44px;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border-radius: var(--radius-sm);
+  cursor: pointer;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
   transition: background var(--t-fast);
 }
 
@@ -960,20 +969,47 @@
   position: fixed;
   top: 0;
   left: 0;
-  width: 260px;
+  width: 270px;
+  max-width: 85vw;
   height: 100%;
-  background: var(--bg-panel);
-  border-right: 1px solid rgba(201,168,76,0.3);
+  background: rgba(14, 28, 18, 0.98);
+  border-right: 1.5px solid rgba(201,168,76,0.35);
+  box-shadow: 4px 0 28px rgba(0, 0, 0, 0.75);
   z-index: 500;
   display: flex;
   align-items: flex-start;
   padding-top: 60px;
-  transform: translateX(-260px);
+  transform: translateX(-100%);
   transition: transform var(--t-med);
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .ingame-menu:not(.hidden) {
   transform: translateX(0);
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.ingame-menu.hidden {
+  transform: translateX(-100%);
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.ingame-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  z-index: 495;
+  transition: opacity var(--t-fast);
+}
+
+.ingame-menu-backdrop.hidden {
+  display: none;
+  opacity: 0;
+  pointer-events: none;
 }
 
 .ingame-menu-inner {

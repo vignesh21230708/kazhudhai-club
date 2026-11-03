@@ -355,17 +355,48 @@ const OnlineClient = (() => {
    * Play a card in the online game.
    */
   function playCard(cardId) {
-    if (!_socket || !_roomCode || !_playerId) return;
+    if (!_socket || !_roomCode || !_playerId) {
+      if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+        TableUI.resetPlayInFlight();
+      }
+      return;
+    }
 
     _socket.emit('play_card', {
       roomCode: _roomCode,
       playerId: _playerId,
       cardId:   cardId,
     }, (res) => {
+      if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
+        TableUI.resetPlayInFlight();
+      }
       if (res && !res.success) {
         showToast(res.message || 'Illegal card play', 'error');
+        // Resync authoritative state from server if play was rejected
+        if (_socket && _roomCode) {
+          _socket.emit('get_room_state', { roomCode: _roomCode, playerId: _playerId });
+        }
       }
     });
+  }
+
+  /**
+   * Restart game (host only)
+   */
+  function restartGame() {
+    if (!_socket || !_roomCode || !_playerId) return;
+    if (_isHost) {
+      _socket.emit('start_game', {
+        roomCode: _roomCode,
+        playerId: _playerId,
+      }, (res) => {
+        if (res && !res.success) {
+          showToast(res.message || 'Cannot restart game', 'error');
+        }
+      });
+    } else {
+      showToast('Only the host can restart the game', 'info');
+    }
   }
 
   /**
@@ -451,6 +482,7 @@ const OnlineClient = (() => {
     createRoom,
     joinRoom,
     startGame,
+    restartGame,
     playCard,
     leaveRoom,
     reconnectSession,

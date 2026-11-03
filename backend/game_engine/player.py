@@ -92,9 +92,13 @@ class Player:
             'id':                self.id,
             'name':              self.name,
             'is_ai':             self.is_ai,
+            'isAI':              self.is_ai,
             'card_count':        self.card_count,
+            'cardCount':         self.card_count,
             'is_safe':           self.is_safe,
+            'isSafe':            self.is_safe,
             'is_active':         self.is_active,
+            'isActive':          self.is_active,
             'connection_status': self.connection_status,
         }
 
