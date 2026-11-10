@@ -71,11 +71,13 @@ const TableUI = (() => {
 
   // ── In-game slide-out menu controls ──
   function openInGameMenu() {
+    if (!DOM.ingameMenu) _cache();
     if (DOM.ingameMenu) DOM.ingameMenu.classList.remove('hidden');
     if (DOM.menuBackdrop) DOM.menuBackdrop.classList.remove('hidden');
   }
 
   function closeInGameMenu() {
+    if (!DOM.ingameMenu) _cache();
     if (DOM.ingameMenu) DOM.ingameMenu.classList.add('hidden');
     if (DOM.menuBackdrop) DOM.menuBackdrop.classList.add('hidden');
   }
@@ -104,13 +106,29 @@ const TableUI = (() => {
 
   function _bindTableEvents() {
     if (_eventsBound) return;
+    _cache();
     _eventsBound = true;
+
+    // Helper to safely bind both click and touch without double firing
+    function bindTap(el, handler) {
+      if (!el) return;
+      let lastTrigger = 0;
+      const onEvent = (e) => {
+        const now = Date.now();
+        if (now - lastTrigger < 350) return;
+        lastTrigger = now;
+        handler(e);
+      };
+      el.addEventListener('click', onEvent);
+      el.addEventListener('touchend', onEvent);
+    }
 
     // HUD menu button (hamburger ☰)
     const menuBtn = document.getElementById('btn-menu-game');
     if (menuBtn) {
-      menuBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+      bindTap(menuBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         Sound.click();
         if (DOM.ingameMenu && DOM.ingameMenu.classList.contains('hidden')) {
           openInGameMenu();
@@ -123,16 +141,18 @@ const TableUI = (() => {
     // In-game menu close button (✕)
     const closeBtn = document.getElementById('btn-close-ingame-menu');
     if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
+      bindTap(closeBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         Sound.click();
         closeInGameMenu();
       });
     }
 
-    // Backdrop overlay click
+    // Backdrop overlay click/touch
     if (DOM.menuBackdrop) {
-      DOM.menuBackdrop.addEventListener('click', () => {
+      bindTap(DOM.menuBackdrop, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         closeInGameMenu();
       });
     }
@@ -140,21 +160,30 @@ const TableUI = (() => {
     // Rules & Settings buttons in menu
     const rulesBtn = document.getElementById('btn-rules-ingame');
     if (rulesBtn) {
-      rulesBtn.addEventListener('click', () => {
+      bindTap(rulesBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         closeInGameMenu();
+        if (typeof MenuUI !== 'undefined' && MenuUI.showModal) {
+          MenuUI.showModal('modal-rules');
+        }
       });
     }
     const settingsBtn = document.getElementById('btn-settings-ingame');
     if (settingsBtn) {
-      settingsBtn.addEventListener('click', () => {
+      bindTap(settingsBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         closeInGameMenu();
+        if (typeof MenuUI !== 'undefined' && MenuUI.showModal) {
+          MenuUI.showModal('modal-settings');
+        }
       });
     }
 
     // Exit confirmation
     const exitBtn = document.getElementById('btn-exit-game');
     if (exitBtn) {
-      exitBtn.addEventListener('click', () => {
+      bindTap(exitBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         closeInGameMenu();
         if (DOM.confirmExit) DOM.confirmExit.classList.remove('hidden');
       });
@@ -162,69 +191,68 @@ const TableUI = (() => {
 
     const cancelExitBtn = document.getElementById('btn-cancel-exit');
     if (cancelExitBtn) {
-      cancelExitBtn.addEventListener('click', () => {
+      bindTap(cancelExitBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         if (DOM.confirmExit) DOM.confirmExit.classList.add('hidden');
       });
     }
 
     const confirmExitBtn = document.getElementById('btn-confirm-exit');
     if (confirmExitBtn) {
-      confirmExitBtn.addEventListener('click', () => {
+      bindTap(confirmExitBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         if (DOM.confirmExit) DOM.confirmExit.classList.add('hidden');
         Sound.click();
-        App.exitToMenu();
+        if (typeof App !== 'undefined' && App.exitToMenu) {
+          App.exitToMenu();
+        }
       });
     }
 
     // Restart
     const restartBtn = document.getElementById('btn-restart-game');
     if (restartBtn) {
-      restartBtn.addEventListener('click', () => {
+      bindTap(restartBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         closeInGameMenu();
         Sound.click();
-        App.restartGame();
+        if (typeof App !== 'undefined' && App.restartGame) {
+          App.restartGame();
+        }
       });
     }
 
     // Play button - support both click and touch on mobile devices
     if (DOM.playBtn) {
-      const handlePlayBtn = (e) => {
-        if (e && typeof e.preventDefault === 'function') {
-          e.preventDefault();
-        }
+      bindTap(DOM.playBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
         _playSelectedCard();
-      };
-      DOM.playBtn.addEventListener('click', handlePlayBtn);
-      DOM.playBtn.addEventListener('touchend', handlePlayBtn);
+      });
     }
 
     // Emoji reaction button (toggle panel)
     if (DOM.btnEmoji) {
-      const toggleEmojiPicker = (e) => {
+      bindTap(DOM.btnEmoji, (e) => {
         if (e && typeof e.preventDefault === 'function') e.preventDefault();
-        e.stopPropagation();
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
         if (DOM.emojiPanel) {
           DOM.emojiPanel.classList.toggle('hidden');
         }
-      };
-      DOM.btnEmoji.addEventListener('click', toggleEmojiPicker);
-      DOM.btnEmoji.addEventListener('touchend', toggleEmojiPicker);
+      });
     }
 
     // Emoji choice buttons
     if (DOM.emojiPanel) {
       DOM.emojiPanel.querySelectorAll('.emoji-choice-btn').forEach(btn => {
-        const chooseEmoji = (e) => {
+        bindTap(btn, (e) => {
           if (e && typeof e.preventDefault === 'function') e.preventDefault();
-          e.stopPropagation();
+          if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
           const emoji = btn.dataset.emoji;
           if (DOM.emojiPanel) DOM.emojiPanel.classList.add('hidden');
           if (emoji && typeof App !== 'undefined' && App.sendReaction) {
             App.sendReaction(emoji);
           }
-        };
-        btn.addEventListener('click', chooseEmoji);
-        btn.addEventListener('touchend', chooseEmoji);
+        });
       });
     }
 
@@ -457,41 +485,6 @@ const TableUI = (() => {
 
   function _createOpponentSlot(opp, position) {
     return _createPlayerSlot(opp, position, opp.position || 1, false);
-  }
-
-    const nameEl = document.createElement('div');
-    nameEl.className = 'opponent-name';
-    nameEl.id = `opp-name-${opp.id}`;
-
-    // Connection status indicator dot
-    const status = opp.connection_status || 'connected';
-    const statusDot = document.createElement('span');
-    statusDot.className = `player-status-dot status-${status}`;
-    statusDot.id = `opp-status-${opp.id}`;
-    statusDot.title = status.charAt(0).toUpperCase() + status.slice(1);
-
-    const nameText = document.createElement('span');
-    nameText.textContent = opp.name;
-
-    nameEl.appendChild(statusDot);
-    nameEl.appendChild(nameText);
-
-    const cardCount = _getCardCount(opp);
-    const countEl = document.createElement('div');
-    countEl.className = 'opponent-card-count';
-    countEl.id = `opp-count-${opp.id}`;
-    countEl.textContent = _formatCardCountText(opp);
-
-    // Fan of card backs
-    const fan = CardRenderer.createOpponentFan(cardCount);
-    fan.id = `opp-fan-${opp.id}`;
-
-    slot.appendChild(avatar);
-    slot.appendChild(nameEl);
-    slot.appendChild(countEl);
-    if (cardCount > 0) slot.appendChild(fan);
-
-    return slot;
   }
 
   // ── Update one opponent's card count and turn state ──
@@ -853,9 +846,14 @@ const TableUI = (() => {
   function showPlayerReaction(playerId, emoji) {
     if (!emoji) return;
 
-    const targetEl = document.getElementById(`opp-avatar-${playerId}`) ||
-                     document.getElementById(`opp-slot-${playerId}`) ||
-                     DOM.selfAvatar;
+    let targetEl = null;
+    const isSelf = (playerId === 'human' || (typeof OnlineClient !== 'undefined' && typeof OnlineClient.getPlayerId === 'function' && playerId === OnlineClient.getPlayerId()));
+    if (isSelf) {
+      targetEl = DOM.selfAvatar || document.getElementById('self-avatar');
+    } else {
+      targetEl = document.getElementById(`opp-avatar-${playerId}`) ||
+                 document.getElementById(`opp-slot-${playerId}`);
+    }
     if (!targetEl) return;
 
     // Remove any previous active reaction bubble in this slot
@@ -954,5 +952,17 @@ const TableUI = (() => {
     openInGameMenu,
     closeInGameMenu,
     resetPlayInFlight,
+    bindEvents: _bindTableEvents,
   };
 })();
+
+// Auto-bind table and menu events on DOM ready
+if (typeof document !== 'undefined') {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+      if (typeof TableUI !== 'undefined' && TableUI.bindEvents) TableUI.bindEvents();
+    });
+  } else {
+    if (typeof TableUI !== 'undefined' && TableUI.bindEvents) TableUI.bindEvents();
+  }
+}
