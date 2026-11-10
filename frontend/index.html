@@ -411,27 +411,6 @@
         <span class="hud-value" id="hud-common-count">0 cards</span>
       </div>
       <div class="hud-status" id="hud-status">Waiting to start…</div>
-      <button class="hud-btn activity-btn" id="btn-toggle-activity" title="Game Activity History (🕘)" aria-label="Game Activity">
-        🕘
-        <span class="activity-badge hidden" id="activity-badge">0</span>
-      </button>
-    </div>
-
-    <!-- Game Activity Backdrop (Closes on outside click) -->
-    <div class="activity-backdrop hidden" id="activity-backdrop"></div>
-
-    <!-- Game Activity History Popup / Side Panel -->
-    <div class="activity-drawer hidden" id="activity-drawer" role="dialog" aria-modal="true" aria-label="Game Activity History">
-      <div class="activity-drawer-header">
-        <div class="activity-drawer-title">
-          <span>🕘</span>
-          <span>Game Activity</span>
-        </div>
-        <button class="activity-drawer-close" id="btn-close-activity" aria-label="Close Activity (×)">✕</button>
-      </div>
-      <div class="activity-drawer-body" id="activity-log-list">
-        <div class="empty-activity-hint">No activity recorded yet</div>
-      </div>
     </div>
 
     <!-- Main Game Table -->
@@ -439,11 +418,24 @@
       <div class="table-felt">
         <div class="table-border"></div>
 
-        <!-- 🕘 History Icon Button (Top-Right corner of table) -->
-        <button class="table-history-btn" id="btn-table-history" title="Game History (🕘)" aria-label="Game History">
-          <span class="table-history-icon">🕘</span>
-          <span class="activity-badge hidden" id="table-history-badge">0</span>
+        <!-- 😀 Emoji Reactions Button (Top-Right corner of table) -->
+        <button class="table-emoji-btn" id="btn-table-emoji" title="Send Reaction (😀)" aria-label="Send Reaction" type="button">
+          <span class="table-emoji-icon">😀</span>
         </button>
+
+        <!-- Compact Emoji Picker Popover -->
+        <div class="emoji-picker-panel hidden" id="emoji-picker-panel" role="dialog" aria-label="Choose Reaction Emoji">
+          <div class="emoji-picker-grid">
+            <button class="emoji-choice-btn" data-emoji="😂" title="Laughing" type="button">😂</button>
+            <button class="emoji-choice-btn" data-emoji="❤️" title="Love" type="button">❤️</button>
+            <button class="emoji-choice-btn" data-emoji="👍" title="Thumbs Up" type="button">👍</button>
+            <button class="emoji-choice-btn" data-emoji="😮" title="Surprised" type="button">😮</button>
+            <button class="emoji-choice-btn" data-emoji="😎" title="Cool" type="button">😎</button>
+            <button class="emoji-choice-btn" data-emoji="👏" title="Clap" type="button">👏</button>
+            <button class="emoji-choice-btn" data-emoji="🔥" title="Fire" type="button">🔥</button>
+            <button class="emoji-choice-btn" data-emoji="😢" title="Sad" type="button">😢</button>
+          </div>
+        </div>
 
         <div class="table-inner">
 

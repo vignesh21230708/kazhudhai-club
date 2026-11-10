@@ -280,29 +280,28 @@ class TestDepartureScenarios(unittest.TestCase):
         mobile.disconnect()
 
     def test_scenario_9_ui_markup_and_responsive_css(self):
-        """Scenario 9: Check 🕘 history icon, popup panel, click-outside overlay, and mobile responsive layout."""
+        """Scenario 9: Verify Game Activity UI removed and Multiplayer Emoji Reactions UI integrated."""
         # 1. Read index.html
         with open('frontend/index.html', 'r', encoding='utf-8') as f:
             html = f.read()
 
-        # History button on table felt
-        self.assertIn('id="btn-table-history"', html, "Table felt must have 🕘 history icon button")
-        self.assertIn('class="table-history-btn"', html)
-        self.assertIn('🕘', html)
+        # In-game table history button and drawer removed
+        self.assertNotIn('id="btn-table-history"', html, "Table felt history button must be removed")
+        self.assertNotIn('id="activity-drawer"', html, "Activity popup panel must be removed")
+        self.assertNotIn('id="activity-backdrop"', html, "Activity backdrop must be removed")
 
-        # Popup panel & backdrop
-        self.assertIn('id="activity-drawer"', html, "Activity popup panel must exist")
-        self.assertIn('id="activity-backdrop"', html, "Click-outside backdrop must exist")
-        self.assertIn('id="btn-close-activity"', html, "Close (×) button must exist")
-        self.assertIn('id="activity-log-list"', html, "Activity log list container must exist")
+        # Emoji reaction button and picker panel present
+        self.assertIn('id="btn-table-emoji"', html, "Table felt must have emoji reaction button")
+        self.assertIn('id="emoji-picker-panel"', html, "Emoji picker panel must exist")
+        self.assertIn('class="emoji-choice-btn"', html)
 
         # 2. Read table.css
         with open('frontend/css/table.css', 'r', encoding='utf-8') as f:
             table_css = f.read()
 
-        self.assertIn('.table-history-btn', table_css)
-        self.assertIn('.activity-backdrop', table_css)
-        self.assertIn('.activity-drawer', table_css)
+        self.assertIn('.table-emoji-btn', table_css)
+        self.assertIn('.emoji-picker-panel', table_css)
+        self.assertIn('.player-reaction-bubble', table_css)
         self.assertIn('top: 10px', table_css)
         self.assertIn('right: 12px', table_css)
 
@@ -310,20 +309,15 @@ class TestDepartureScenarios(unittest.TestCase):
         with open('frontend/css/responsive.css', 'r', encoding='utf-8') as f:
             resp_css = f.read()
 
-        # Verify mobile bottom sheet / fit screen styling
-        self.assertIn('@media (max-width: 768px)', resp_css)
-        self.assertIn('.activity-drawer', resp_css)
-        self.assertIn('max-height: 60vh', resp_css)
-        self.assertIn('border-radius: 16px 16px 0 0', resp_css)
+        self.assertIn('.table-emoji-btn', resp_css)
+        self.assertIn('.emoji-picker-panel', resp_css)
 
-        # 4. Read main.js click outside binding
+        # 4. Read main.js
         with open('frontend/js/main.js', 'r', encoding='utf-8') as f:
             main_js = f.read()
 
-        self.assertIn('btn-table-history', main_js)
-        self.assertIn('activity-backdrop', main_js)
-        self.assertIn('closeActivityDrawer', main_js)
-        self.assertIn('isInside', main_js)
+        self.assertIn('sendReaction', main_js)
+        self.assertIn('handlePlayerReaction', main_js)
 
     def test_scenario_10_gameplay_synchronization_and_privacy(self):
         """Scenario 10: Gameplay synchronization & zero card leakage."""

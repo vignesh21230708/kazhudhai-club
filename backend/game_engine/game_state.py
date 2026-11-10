@@ -391,10 +391,12 @@ class GameState:
                 })
 
         players_data = []
-        for p in self.players:
+        for idx, p in enumerate(self.players):
             pd = p.to_public_dict()
-            pd['is_active'] = bool(cp is not None and cp.id == p.id)
-            pd['isActive']  = pd['is_active']
+            pd['position']   = idx + 1
+            pd['seat_index'] = idx
+            pd['is_active']  = bool(cp is not None and cp.id == p.id)
+            pd['isActive']   = pd['is_active']
             players_data.append(pd)
 
         state = {

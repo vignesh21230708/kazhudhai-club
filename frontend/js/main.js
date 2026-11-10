@@ -58,6 +58,7 @@ const App = (() => {
   let _roundResolutionTimer = null;
   let _isStepping      = false;
   let _isRoundPaused   = false;
+  let _pendingNextState = null;
   let _unreadActivityCount = 0;
 
   function _clearRoundTimer() {
@@ -81,111 +82,15 @@ const App = (() => {
   function init() {
     Screens.go('screen-menu');
     MenuUI.init();
-    _bindActivityDrawer();
     console.log('[KAZHUDHAI CLUB] Stage 3 Active: Core round gameplay online.');
   }
 
-  function _bindActivityDrawer() {
-    // 🕘 Table History Button (Top-Right corner of table)
-    const tableHistoryBtn = document.getElementById('btn-table-history');
-    if (tableHistoryBtn) {
-      tableHistoryBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Sound.click();
-        toggleActivityDrawer();
-      });
-    }
-
-    // HUD Bar History Button
-    const toggleBtn = document.getElementById('btn-toggle-activity');
-    if (toggleBtn) {
-      toggleBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Sound.click();
-        toggleActivityDrawer();
-      });
-    }
-
-    // Close button (×)
-    const closeBtn = document.getElementById('btn-close-activity');
-    if (closeBtn) {
-      closeBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        Sound.click();
-        closeActivityDrawer();
-      });
-    }
-
-    // Backdrop click to close panel
-    const backdrop = document.getElementById('activity-backdrop');
-    if (backdrop) {
-      backdrop.addEventListener('click', () => {
-        closeActivityDrawer();
-      });
-    }
-
-    // Global click outside to close panel
-    document.addEventListener('click', (e) => {
-      const drawer = document.getElementById('activity-drawer');
-      if (!drawer || drawer.classList.contains('hidden')) return;
-
-      const isInside = drawer.contains(e.target);
-      const isTrigger = e.target.closest('#btn-table-history') || e.target.closest('#btn-toggle-activity');
-
-      if (!isInside && !isTrigger) {
-        closeActivityDrawer();
-      }
-    });
-
-    // Close on Escape key
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape') {
-        closeActivityDrawer();
-      }
-    });
-  }
-
-  function toggleActivityDrawer() {
-    const drawer = document.getElementById('activity-drawer');
-    if (!drawer) return;
-    if (drawer.classList.contains('hidden')) {
-      openActivityDrawer();
-    } else {
-      closeActivityDrawer();
-    }
-  }
-
-  function openActivityDrawer() {
-    const drawer = document.getElementById('activity-drawer');
-    if (drawer) drawer.classList.remove('hidden');
-    const backdrop = document.getElementById('activity-backdrop');
-    if (backdrop) backdrop.classList.remove('hidden');
-    _unreadActivityCount = 0;
-    _updateActivityBadge();
-  }
-
-  function closeActivityDrawer() {
-    const drawer = document.getElementById('activity-drawer');
-    if (drawer) drawer.classList.add('hidden');
-    const backdrop = document.getElementById('activity-backdrop');
-    if (backdrop) backdrop.classList.add('hidden');
-  }
-
-  function _updateActivityBadge() {
-    const badges = [
-      document.getElementById('activity-badge'),
-      document.getElementById('table-history-badge'),
-    ];
-    badges.forEach(badge => {
-      if (!badge) return;
-      if (_unreadActivityCount > 0) {
-        badge.textContent = _unreadActivityCount > 99 ? '99+' : _unreadActivityCount;
-        badge.classList.remove('hidden');
-      } else {
-        badge.classList.add('hidden');
-      }
-    });
-  }
+  // Safe stubs for activity drawer (removed from game UI per user request)
+  function _bindActivityDrawer() {}
+  function toggleActivityDrawer() {}
+  function openActivityDrawer() {}
+  function closeActivityDrawer() {}
+  function _updateActivityBadge() {}
 
   function _renderSingleActivity(act, prepend = true) {
     const list = document.getElementById('activity-log-list');
@@ -467,10 +372,9 @@ const App = (() => {
   function _renderState(state) {
     if (!state) return;
 
-    // Normalize opponents list for both offline and online modes
+    // Use authoritative player list from server (strictly room joining order)
     const myId = _isOffline ? 'human' : OnlineClient.getPlayerId();
-    if (!state.opponents && state.players) {
-      state.opponents = state.players.filter(p => p.id !== myId);
+    if (state.players) {
       const me = state.players.find(p => p.id === myId);
       if (me) {
         state.player_name = me.name;
@@ -478,8 +382,8 @@ const App = (() => {
       }
     }
 
-    // Opponents
-    TableUI.renderOpponents(state.opponents || []);
+    // Always render players in strictly consistent server-authoritative order:
+    TableUI.renderPlayers(state.players || [], myId);
 
     // Authoritative turn calculation comparing current_player_id to local player ID
     const isMyTurn = (state.current_player_id && myId)
@@ -487,7 +391,7 @@ const App = (() => {
       : !!state.is_my_turn;
     state.is_my_turn = isMyTurn;
 
-    const currentOpp = (state.opponents || []).find(o => o.id === state.current_player_id);
+    const currentOpp = (state.players || []).find(o => o.id === state.current_player_id);
     const currentName = isMyTurn ? (state.player_name || 'You') : (currentOpp ? currentOpp.name : 'Opponent');
 
     TableUI.setTurn(isMyTurn ? 'Your' : `${currentName}'s`, isMyTurn);
@@ -504,6 +408,12 @@ const App = (() => {
 
     // Common pile
     TableUI.updateCommonPile(state.common_pile_count || 0);
+
+    // Synchronize played cards on the table
+    // When not in mid-resolution pause, strictly show cards for the active round:
+    if (!_isRoundPaused && typeof TableUI.syncPlayedCards === 'function') {
+      TableUI.syncPlayedCards(state.played_cards || []);
+    }
 
     // Human hand - always pass the authoritative isMyTurn
     TableUI.renderHand(
@@ -573,11 +483,16 @@ const App = (() => {
     if (state.activity_log) {
       _renderActivityLog(state.activity_log);
     }
-    // If it's my turn, ensure paused round state and play locks are cleanly released
+
+    // If currently paused in round resolution animation, do NOT destroy the timer!
+    // Store the state so it is cleanly rendered once the resolution finishes.
+    if (_isRoundPaused) {
+      _pendingNextState = state;
+      return;
+    }
+
     const myTurn = isCurrentPlayerTurn();
     if (myTurn) {
-      _clearRoundTimer();
-      _isRoundPaused = false;
       if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
         TableUI.resetPlayInFlight();
       }
@@ -678,7 +593,8 @@ const App = (() => {
       if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
         TableUI.resetPlayInFlight();
       }
-      const state = GameClient.getState();
+      const state = _pendingNextState || GameClient.getState();
+      _pendingNextState = null;
       if (state) _renderState(state);
     }, 1800);
   }
@@ -713,6 +629,21 @@ const App = (() => {
     }
   }
 
+  function sendReaction(emoji) {
+    if (!emoji) return;
+    if (!_isOffline) {
+      OnlineClient.sendReaction(emoji);
+    } else {
+      TableUI.showPlayerReaction('human', emoji);
+    }
+  }
+
+  function handlePlayerReaction(data) {
+    if (data && data.player_id && data.emoji) {
+      TableUI.showPlayerReaction(data.player_id, data.emoji);
+    }
+  }
+
   return {
     init,
     startOfflineGame,
@@ -726,6 +657,8 @@ const App = (() => {
     handlePlayerDeparture,
     handlePlayerStatusChange,
     handleActivityLogged,
+    sendReaction,
+    handlePlayerReaction,
     getHumanPlayerId,
     toggleActivityDrawer,
     openActivityDrawer,

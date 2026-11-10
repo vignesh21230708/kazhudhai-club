@@ -171,6 +171,13 @@ const OnlineClient = (() => {
       }
     });
 
+    // Real-time multiplayer emoji reactions
+    _socket.on('player_reaction', (data) => {
+      if (App && App.handlePlayerReaction) {
+        App.handlePlayerReaction(data);
+      }
+    });
+
     return _socket;
   }
 
@@ -439,6 +446,19 @@ const OnlineClient = (() => {
   }
 
   /**
+   * Send an emoji reaction to all players in the room.
+   */
+  function sendReaction(emoji) {
+    if (_socket && _socket.connected && _roomCode && _playerId) {
+      _socket.emit('send_reaction', {
+        roomCode: _roomCode,
+        playerId: _playerId,
+        emoji: emoji,
+      });
+    }
+  }
+
+  /**
    * Leave the waiting room or game.
    */
   function leaveRoom(reason = 'left', onComplete) {
@@ -484,6 +504,7 @@ const OnlineClient = (() => {
     startGame,
     restartGame,
     playCard,
+    sendReaction,
     leaveRoom,
     reconnectSession,
     disconnect,

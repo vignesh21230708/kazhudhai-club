@@ -33,6 +33,8 @@ const TableUI = (() => {
     DOM.ingameMenu     = document.getElementById('ingame-menu');
     DOM.menuBackdrop   = document.getElementById('ingame-menu-backdrop');
     DOM.confirmExit    = document.getElementById('confirm-exit');
+    DOM.btnEmoji       = document.getElementById('btn-table-emoji');
+    DOM.emojiPanel     = document.getElementById('emoji-picker-panel');
   }
 
   let _eventsBound = false;
@@ -195,6 +197,45 @@ const TableUI = (() => {
       DOM.playBtn.addEventListener('click', handlePlayBtn);
       DOM.playBtn.addEventListener('touchend', handlePlayBtn);
     }
+
+    // Emoji reaction button (toggle panel)
+    if (DOM.btnEmoji) {
+      const toggleEmojiPicker = (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        e.stopPropagation();
+        if (DOM.emojiPanel) {
+          DOM.emojiPanel.classList.toggle('hidden');
+        }
+      };
+      DOM.btnEmoji.addEventListener('click', toggleEmojiPicker);
+      DOM.btnEmoji.addEventListener('touchend', toggleEmojiPicker);
+    }
+
+    // Emoji choice buttons
+    if (DOM.emojiPanel) {
+      DOM.emojiPanel.querySelectorAll('.emoji-choice-btn').forEach(btn => {
+        const chooseEmoji = (e) => {
+          if (e && typeof e.preventDefault === 'function') e.preventDefault();
+          e.stopPropagation();
+          const emoji = btn.dataset.emoji;
+          if (DOM.emojiPanel) DOM.emojiPanel.classList.add('hidden');
+          if (emoji && typeof App !== 'undefined' && App.sendReaction) {
+            App.sendReaction(emoji);
+          }
+        };
+        btn.addEventListener('click', chooseEmoji);
+        btn.addEventListener('touchend', chooseEmoji);
+      });
+    }
+
+    // Close emoji picker when tapping outside
+    document.addEventListener('click', (e) => {
+      if (DOM.emojiPanel && !DOM.emojiPanel.classList.contains('hidden')) {
+        if (!DOM.emojiPanel.contains(e.target) && e.target !== DOM.btnEmoji && !DOM.btnEmoji?.contains(e.target)) {
+          DOM.emojiPanel.classList.add('hidden');
+        }
+      }
+    });
   }
 
   function _playSelectedCard() {
@@ -231,32 +272,59 @@ const TableUI = (() => {
     _updateActionBar(_getIsMyTurn(), _legalSuit);
   }
 
-  // ── Render opponents around the table ──
+  // ── Render players around the table ──
   /**
-   * Distribute opponents around the table based on total player count.
-   * Total players = opponents.length + 1 (human player sits at bottom).
+   * Distribute players strictly according to their room joining order:
+   * First joined player = Position 1
+   * Second joined player = Position 2
+   * Third joined player = Position 3
+   * Fourth joined player = Position 4
+   * Every connected device receives and displays the exact same player sequence.
    *
    * Balanced layouts:
-   * 2 players (1 opp):  Top: 1, Left: 0, Right: 0
-   * 3 players (2 opps): Top: 2, Left: 0, Right: 0
-   * 4 players (3 opps): Top: 1, Left: 1, Right: 1
-   * 5 players (4 opps): Top: 2, Left: 1, Right: 1
-   * 6 players (5 opps): Top: 3, Left: 1, Right: 1
-   * 7 players (6 opps): Top: 2, Left: 2, Right: 2 (2 on each edge - perfectly balanced)
+   * 2 players: Top: 2 (P1, P2), Left: 0, Right: 0
+   * 3 players: Left: 1 (P1), Top: 1 (P2), Right: 1 (P3)
+   * 4 players: Left: 1 (P1), Top: 2 (P2, P3), Right: 1 (P4)
+   * 5 players: Left: 1 (P1), Top: 3 (P2, P3, P4), Right: 1 (P5)
+   * 6 players: Left: 2 (P1, P2), Top: 2 (P3, P4), Right: 2 (P5, P6)
+   * 7 players: Left: 2 (P1, P2), Top: 3 (P3, P4, P5), Right: 2 (P6, P7)
    */
+  function _getTableDistribution(totalPlayers) {
+    switch (totalPlayers) {
+      case 2:
+        return { top: 2, left: 0, right: 0 };
+      case 3:
+        return { top: 1, left: 1, right: 1 };
+      case 4:
+        return { top: 2, left: 1, right: 1 };
+      case 5:
+        return { top: 3, left: 1, right: 1 };
+      case 6:
+        return { top: 2, left: 2, right: 2 };
+      case 7:
+        return { top: 3, left: 2, right: 2 };
+      default: {
+        const side = Math.max(0, Math.floor((totalPlayers - 1) / 3));
+        const top = Math.max(1, totalPlayers - side * 2);
+        return { top, left: side, right: side };
+      }
+    }
+  }
+
+  // Backward compatibility distribution function
   function _getOpponentDistribution(count) {
     switch (count) {
-      case 1: // 2 players
+      case 1:
         return { top: 1, left: 0, right: 0 };
-      case 2: // 3 players
+      case 2:
         return { top: 2, left: 0, right: 0 };
-      case 3: // 4 players
+      case 3:
         return { top: 1, left: 1, right: 1 };
-      case 4: // 5 players
+      case 4:
         return { top: 2, left: 1, right: 1 };
-      case 5: // 6 players (5 opponents: 1 left, 3 top, 1 right)
+      case 5:
         return { top: 3, left: 1, right: 1 };
-      case 6: // 7 players (6 opponents: 2 left, 2 top, 2 right)
+      case 6:
         return { top: 2, left: 2, right: 2 };
       default: {
         const side = Math.max(0, Math.floor((count - 1) / 3));
@@ -267,9 +335,12 @@ const TableUI = (() => {
   }
 
   /**
-   * @param {Array} opponents  - Array of {id, name, cardCount, isAI, isActive, isSafe}
+   * Render all players around the table in consistent server-authoritative order.
+   *
+   * @param {Array} players - Array of {id, name, cardCount, isAI, isActive, isSafe, position}
+   * @param {string} myId   - Local player ID
    */
-  function renderOpponents(opponents) {
+  function renderPlayers(players, myId) {
     if (!DOM.opponentsTop) _cache();
 
     // Clear zones
@@ -277,8 +348,8 @@ const TableUI = (() => {
     DOM.opponentsLeft.innerHTML  = '';
     DOM.opponentsRight.innerHTML = '';
 
-    const oppCount = opponents.length;
-    const totalPlayers = oppCount + 1;
+    const totalPlayers = players.length;
+    if (totalPlayers === 0) return;
 
     // Apply layout hooks to table elements
     const tableEl = document.querySelector('.game-table');
@@ -291,37 +362,47 @@ const TableUI = (() => {
       tableInner.className = `table-inner players-${totalPlayers}`;
     }
 
-    const dist = _getOpponentDistribution(oppCount);
+    const dist = _getTableDistribution(totalPlayers);
 
-    let leftPlayers  = [];
-    let topPlayers   = [];
-    let rightPlayers = [];
+    const leftPlayers  = players.slice(0, dist.left);
+    const topPlayers   = players.slice(dist.left, dist.left + dist.top);
+    const rightPlayers = players.slice(dist.left + dist.top, dist.left + dist.top + dist.right);
 
-    // Natural clockwise table order (Left -> Top -> Right)
-    if (dist.left > 0) {
-      leftPlayers  = opponents.slice(0, dist.left);
-      topPlayers   = opponents.slice(dist.left, dist.left + dist.top);
-      rightPlayers = opponents.slice(dist.left + dist.top, dist.left + dist.top + dist.right);
-    } else {
-      topPlayers = opponents.slice(0, dist.top);
-    }
-
-    // Append to respective table zones
-    topPlayers.forEach(opp => DOM.opponentsTop.appendChild(_createOpponentSlot(opp, 'top')));
-    leftPlayers.forEach(opp => DOM.opponentsLeft.appendChild(_createOpponentSlot(opp, 'left')));
-    rightPlayers.forEach(opp => DOM.opponentsRight.appendChild(_createOpponentSlot(opp, 'right')));
+    // Append to respective table zones in strictly consistent order
+    leftPlayers.forEach((p, idx) => {
+      const posNum = idx + 1;
+      DOM.opponentsLeft.appendChild(_createPlayerSlot(p, 'left', posNum, p.id === myId));
+    });
+    topPlayers.forEach((p, idx) => {
+      const posNum = dist.left + idx + 1;
+      DOM.opponentsTop.appendChild(_createPlayerSlot(p, 'top', posNum, p.id === myId));
+    });
+    rightPlayers.forEach((p, idx) => {
+      const posNum = dist.left + dist.top + idx + 1;
+      DOM.opponentsRight.appendChild(_createPlayerSlot(p, 'right', posNum, p.id === myId));
+    });
   }
 
-  function _createOpponentSlot(opp, position) {
+  function renderOpponents(opponents, myId) {
+    renderPlayers(opponents, myId);
+  }
+
+  function _createPlayerSlot(opp, position, posNum, isSelf) {
     const slot = document.createElement('div');
     const isSide = position === 'side' || position === 'left' || position === 'right';
-    slot.className = `opponent-slot ${position}${isSide ? ' side' : ''}`;
+    slot.className = `opponent-slot ${position}${isSide ? ' side' : ''}${isSelf ? ' is-self' : ''}`;
     slot.id = `opp-slot-${opp.id}`;
+
+    // Position indicator badge: P1, P2, P3, etc.
+    const posBadge = document.createElement('div');
+    posBadge.className = 'player-pos-badge';
+    posBadge.textContent = `P${posNum || opp.position || 1}`;
+    slot.appendChild(posBadge);
 
     const avatar = document.createElement('div');
     avatar.className = `opponent-avatar${opp.isActive ? ' active-turn' : ''}${opp.isSafe ? ' safe' : ''}`;
     avatar.id = `opp-avatar-${opp.id}`;
-    avatar.innerHTML = `<span class="avatar-emoji">${opp.isAI ? '🤖' : '👤'}</span>`;
+    avatar.innerHTML = `<span class="avatar-emoji">${opp.isAI ? '🤖' : (isSelf ? '👤' : '👤')}</span>`;
 
     if (opp.isSafe) {
       const badge = document.createElement('div');
@@ -336,6 +417,47 @@ const TableUI = (() => {
       chip.textContent = 'AI';
       avatar.appendChild(chip);
     }
+
+    const nameEl = document.createElement('div');
+    nameEl.className = 'opponent-name';
+    nameEl.id = `opp-name-${opp.id}`;
+
+    // Connection status indicator dot
+    const status = opp.connection_status || 'connected';
+    const statusDot = document.createElement('span');
+    statusDot.className = `player-status-dot status-${status}`;
+    statusDot.id = `opp-status-${opp.id}`;
+    statusDot.title = status.charAt(0).toUpperCase() + status.slice(1);
+
+    const nameText = document.createElement('span');
+    nameText.textContent = isSelf ? `${opp.name} (You)` : opp.name;
+
+    nameEl.appendChild(statusDot);
+    nameEl.appendChild(nameText);
+
+    const cardCount = _getCardCount(opp);
+    const countEl = document.createElement('div');
+    countEl.className = 'opponent-card-count';
+    countEl.id = `opp-count-${opp.id}`;
+    countEl.textContent = _formatCardCountText(opp);
+
+    slot.appendChild(avatar);
+    slot.appendChild(nameEl);
+    slot.appendChild(countEl);
+
+    // Fan of card backs (omit for self who has real cards displayed in hand below)
+    if (!isSelf && cardCount > 0) {
+      const fan = CardRenderer.createOpponentFan(cardCount);
+      fan.id = `opp-fan-${opp.id}`;
+      slot.appendChild(fan);
+    }
+
+    return slot;
+  }
+
+  function _createOpponentSlot(opp, position) {
+    return _createPlayerSlot(opp, position, opp.position || 1, false);
+  }
 
     const nameEl = document.createElement('div');
     nameEl.className = 'opponent-name';
@@ -696,6 +818,63 @@ const TableUI = (() => {
     }
   }
 
+  // ── Authoritative sync for played cards ──
+  function syncPlayedCards(playedCards) {
+    if (!DOM.playedCardsRow) _cache();
+    if (!Array.isArray(playedCards) || playedCards.length === 0) {
+      if (!DOM.playedCardsRow.querySelector('.empty-zone-hint') || DOM.playedCardsRow.children.length > 1) {
+        clearPlayedCards(false);
+      }
+      return;
+    }
+
+    const currentCardEls = DOM.playedCardsRow.querySelectorAll('.card');
+    let isMatch = (currentCardEls.length === playedCards.length);
+    if (isMatch) {
+      for (let i = 0; i < playedCards.length; i++) {
+        const pc = playedCards[i];
+        const cardId = pc.card ? pc.card.id : null;
+        if (currentCardEls[i].dataset.cardId !== String(cardId)) {
+          isMatch = false;
+          break;
+        }
+      }
+    }
+
+    if (!isMatch) {
+      DOM.playedCardsRow.innerHTML = '';
+      playedCards.forEach(pc => {
+        addPlayedCard(pc.card, pc.player_name, pc.is_attack);
+      });
+    }
+  }
+
+  // ── Show floating emoji reaction bubble near player's avatar ──
+  function showPlayerReaction(playerId, emoji) {
+    if (!emoji) return;
+
+    const targetEl = document.getElementById(`opp-avatar-${playerId}`) ||
+                     document.getElementById(`opp-slot-${playerId}`) ||
+                     DOM.selfAvatar;
+    if (!targetEl) return;
+
+    // Remove any previous active reaction bubble in this slot
+    targetEl.querySelectorAll('.player-reaction-bubble').forEach(b => b.remove());
+
+    const bubble = document.createElement('div');
+    bubble.className = 'player-reaction-bubble';
+    bubble.textContent = emoji;
+
+    targetEl.style.position = 'relative';
+    targetEl.appendChild(bubble);
+
+    Sound.click();
+
+    setTimeout(() => {
+      bubble.remove();
+    }, 3000);
+  }
+
   // ── Show / hide attack banner ──
   function showAttackBanner(attackerName) {
     DOM.attackSub.textContent = `${attackerName} caused an ATTACK!`;
@@ -755,11 +934,14 @@ const TableUI = (() => {
 
   return {
     init,
+    renderPlayers,
     renderOpponents,
     updateOpponent,
     renderHand,
     addPlayedCard,
     clearPlayedCards,
+    syncPlayedCards,
+    showPlayerReaction,
     showAttackBanner,
     hideAttackBanner,
     updateCommonPile,

@@ -333,6 +333,35 @@ def register_socket_events(socketio):
             return {'success': True}
         return {'success': False, 'message': 'Room not found'}
 
+    @socketio.on('send_reaction')
+    def handle_send_reaction(data):
+        try:
+            room_code = (data.get('roomCode') or '').strip().upper()
+            player_id = data.get('playerId')
+            emoji     = (data.get('emoji') or '').strip()
+            allowed_emojis = {'😂', '❤️', '👍', '😮', '😎', '👏', '🔥', '😢'}
+            if not emoji or emoji not in allowed_emojis:
+                return {'success': False, 'message': 'Invalid reaction emoji'}
+
+            room = room_manager.get_room(room_code)
+            if not room:
+                return {'success': False, 'message': 'Room not found'}
+            if player_id not in room.players:
+                return {'success': False, 'message': 'Player not in room'}
+
+            player = room.players[player_id]
+
+            # Broadcast reaction to all connected players in the room
+            emit('player_reaction', {
+                'player_id':   player.id,
+                'player_name': player.name,
+                'emoji':       emoji,
+            }, room=room.code)
+
+            return {'success': True}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+
     @socketio.on('get_public_rooms')
     def handle_get_public_rooms():
         return room_manager.get_public_rooms()
