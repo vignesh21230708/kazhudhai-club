@@ -1,0 +1,14 @@
+[
+  {
+    "relation": [
+      "delegate_permission/common.handle_all_urls"
+    ],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "club.kazhudhai.game",
+      "sha256_cert_fingerprints": [
+        "94:7F:37:30:02:B4:3F:7A:D8:01:CF:3C:FA:32:63:1C:58:E4:93:A3:90:43:4B:3E:A7:6D:51:3F:28:8E:29:4A"
+      ]
+    }
+  }
+]

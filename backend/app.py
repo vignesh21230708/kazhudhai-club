@@ -52,6 +52,12 @@ def index():
     frontend_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend')
     return send_from_directory(frontend_dir, 'index.html')
 
+@app.route('/.well-known/assetlinks.json')
+def asset_links():
+    """Serve Android TWA Digital Asset Links verification JSON."""
+    well_known_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend', '.well-known')
+    return send_from_directory(well_known_dir, 'assetlinks.json', mimetype='application/json')
+
 @app.route('/<path:filename>')
 def static_files(filename):
     """Serve static frontend files."""

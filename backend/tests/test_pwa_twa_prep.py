@@ -234,6 +234,35 @@ class TestPwaTwaPreparation(unittest.TestCase):
             i += 1
         self.assertEqual(stack, [], f'Unclosed delimiters in service-worker.js: {stack}')
 
+    def test_05_twa_digital_asset_links_endpoint(self):
+        """Verify /.well-known/assetlinks.json serves Digital Asset Links JSON with HTTP 200 and application/json."""
+        expected_fingerprint = (
+            '94:7F:37:30:02:B4:3F:7A:D8:01:CF:3C:FA:32:63:1C:'
+            '58:E4:93:A3:90:43:4B:3E:A7:6D:51:3F:28:8E:29:4A'
+        )
+        disk_path = os.path.join(FRONTEND_DIR, '.well-known', 'assetlinks.json')
+        self.assertTrue(os.path.isfile(disk_path), 'Missing frontend/.well-known/assetlinks.json')
+
+        # Ensure the explicit Flask route handles /.well-known/assetlinks.json without redirect
+        with self.client.get('/.well-known/assetlinks.json') as res:
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.mimetype, 'application/json')
+            self.assertIn('application/json', res.content_type)
+            payload = json.loads(res.data.decode('utf-8'))
+
+        with self.client.head('/.well-known/assetlinks.json') as head_res:
+            self.assertEqual(head_res.status_code, 200)
+            self.assertEqual(head_res.mimetype, 'application/json')
+
+        self.assertIsInstance(payload, list)
+        self.assertEqual(len(payload), 1)
+        statement = payload[0]
+        self.assertEqual(statement.get('relation'), ['delegate_permission/common.handle_all_urls'])
+        target = statement.get('target', {})
+        self.assertEqual(target.get('namespace'), 'android_app')
+        self.assertEqual(target.get('package_name'), 'club.kazhudhai.game')
+        self.assertEqual(target.get('sha256_cert_fingerprints'), [expected_fingerprint])
+
 
 if __name__ == '__main__':
     unittest.main()
