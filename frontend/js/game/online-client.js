@@ -114,6 +114,9 @@ const OnlineClient = (() => {
     _socket.on('game_started', (data) => {
       MenuUI.hideWaitingRoom();
       Screens.go('screen-game');
+      if (typeof App !== 'undefined' && App.activateGameBackGuard) {
+        App.activateGameBackGuard();
+      }
       TableUI.init({
         roomCode:   _roomCode,
         deckCount:  1,
@@ -430,6 +433,9 @@ const OnlineClient = (() => {
           MenuUI.showWaitingRoom(res.room, _playerId);
         } else if (res.room_status === 'playing') {
           Screens.go('screen-game');
+          if (typeof App !== 'undefined' && App.activateGameBackGuard) {
+            App.activateGameBackGuard();
+          }
           TableUI.init({
             roomCode:   _roomCode,
             deckCount:  res.room ? res.room.deck_count : 1,

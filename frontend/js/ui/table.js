@@ -82,6 +82,30 @@ const TableUI = (() => {
     if (DOM.menuBackdrop) DOM.menuBackdrop.classList.add('hidden');
   }
 
+  function isInGameMenuOpen() {
+    if (!DOM.ingameMenu) _cache();
+    return !!(DOM.ingameMenu && !DOM.ingameMenu.classList.contains('hidden'));
+  }
+
+  // ── Leave Game confirmation modal controls ──
+  function isExitConfirmOpen() {
+    if (!DOM.confirmExit) _cache();
+    return !!(DOM.confirmExit && !DOM.confirmExit.classList.contains('hidden'));
+  }
+
+  function showExitConfirm() {
+    if (!DOM.confirmExit) _cache();
+    if (isExitConfirmOpen()) return;
+    closeInGameMenu();
+    if (DOM.emojiPanel) DOM.emojiPanel.classList.add('hidden');
+    if (DOM.confirmExit) DOM.confirmExit.classList.remove('hidden');
+  }
+
+  function hideExitConfirm() {
+    if (!DOM.confirmExit) _cache();
+    if (DOM.confirmExit) DOM.confirmExit.classList.add('hidden');
+  }
+
   // ── Initialise the table for a new game ──
   function init(gameConfig) {
     _cache();
@@ -92,6 +116,7 @@ const TableUI = (() => {
     _isPlayInFlight = false;
     _isFirstDeal = true;
     closeInGameMenu();
+    hideExitConfirm();
 
     DOM.hudRoomCode.textContent  = gameConfig.roomCode  || 'OFFLINE';
     DOM.hudDeckCount.textContent = gameConfig.deckCount || '?';
@@ -184,8 +209,7 @@ const TableUI = (() => {
     if (exitBtn) {
       bindTap(exitBtn, (e) => {
         if (e && typeof e.preventDefault === 'function') e.preventDefault();
-        closeInGameMenu();
-        if (DOM.confirmExit) DOM.confirmExit.classList.remove('hidden');
+        showExitConfirm();
       });
     }
 
@@ -193,7 +217,11 @@ const TableUI = (() => {
     if (cancelExitBtn) {
       bindTap(cancelExitBtn, (e) => {
         if (e && typeof e.preventDefault === 'function') e.preventDefault();
-        if (DOM.confirmExit) DOM.confirmExit.classList.add('hidden');
+        Sound.click();
+        hideExitConfirm();
+        if (typeof App !== 'undefined' && App.activateGameBackGuard) {
+          App.activateGameBackGuard();
+        }
       });
     }
 
@@ -201,7 +229,7 @@ const TableUI = (() => {
     if (confirmExitBtn) {
       bindTap(confirmExitBtn, (e) => {
         if (e && typeof e.preventDefault === 'function') e.preventDefault();
-        if (DOM.confirmExit) DOM.confirmExit.classList.add('hidden');
+        hideExitConfirm();
         Sound.click();
         if (typeof App !== 'undefined' && App.exitToMenu) {
           App.exitToMenu();
@@ -951,6 +979,10 @@ const TableUI = (() => {
     updatePlayerStatus,
     openInGameMenu,
     closeInGameMenu,
+    isInGameMenuOpen,
+    isExitConfirmOpen,
+    showExitConfirm,
+    hideExitConfirm,
     resetPlayInFlight,
     bindEvents: _bindTableEvents,
   };

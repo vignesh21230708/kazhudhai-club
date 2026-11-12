@@ -60,11 +60,125 @@ const App = (() => {
   let _isRoundPaused   = false;
   let _pendingNextState = null;
   let _unreadActivityCount = 0;
+  let _hasGameBackGuard = false;
+  let _suppressNextPopCount = 0;
+  let _suppressResetTimer = null;
+  let _backNavBound = false;
 
   function _clearRoundTimer() {
     if (_roundResolutionTimer) {
       clearTimeout(_roundResolutionTimer);
       _roundResolutionTimer = null;
+    }
+  }
+
+  function _isModalVisible(modalId) {
+    const el = document.getElementById(modalId);
+    return !!(el && !el.classList.contains('hidden'));
+  }
+
+  function _hideOpenModal(modalId) {
+    if (typeof MenuUI !== 'undefined' && typeof MenuUI.hideModal === 'function') {
+      MenuUI.hideModal(modalId);
+    } else {
+      document.getElementById(modalId)?.classList.add('hidden');
+    }
+  }
+
+  function isActivelyPlayingGame() {
+    if (Screens.current() !== 'screen-game') return false;
+    if (!GameClient.isActive()) return false;
+    const state = GameClient.getState();
+    return !state || state.status === 'playing';
+  }
+
+  function activateGameBackGuard() {
+    if (typeof window === 'undefined' || !window.history || typeof window.history.pushState !== 'function') {
+      return;
+    }
+    if (Screens.current() !== 'screen-game') return;
+
+    if (_suppressResetTimer) {
+      clearTimeout(_suppressResetTimer);
+      _suppressResetTimer = null;
+    }
+    _suppressNextPopCount = 0;
+
+    if (_hasGameBackGuard) return;
+    if (window.history.state && window.history.state.kzBackGuard === 'game') {
+      _hasGameBackGuard = true;
+      return;
+    }
+
+    const nextState = Object.assign({}, window.history.state || {}, { kzBackGuard: 'game' });
+    window.history.pushState(nextState, '', window.location.href);
+    _hasGameBackGuard = true;
+  }
+
+  function _releaseGameBackGuard() {
+    _hasGameBackGuard = false;
+    if (typeof window === 'undefined' || !window.history) return;
+
+    if (window.history.state && window.history.state.kzBackGuard === 'game') {
+      _suppressNextPopCount += 1;
+      if (_suppressResetTimer) clearTimeout(_suppressResetTimer);
+      _suppressResetTimer = setTimeout(() => {
+        _suppressNextPopCount = 0;
+        _suppressResetTimer = null;
+      }, 150);
+      window.history.back();
+    }
+  }
+
+  function _handlePopState() {
+    if (_suppressNextPopCount > 0) {
+      _suppressNextPopCount -= 1;
+      if (_suppressNextPopCount === 0 && _suppressResetTimer) {
+        clearTimeout(_suppressResetTimer);
+        _suppressResetTimer = null;
+      }
+      return;
+    }
+
+    // Browser popped the history entry
+    _hasGameBackGuard = false;
+
+    // Retain normal navigation when no game is active
+    if (!isActivelyPlayingGame()) {
+      return;
+    }
+
+    // Priority 1: Close open Rules or Settings modal before prompting to leave
+    if (_isModalVisible('modal-rules')) {
+      _hideOpenModal('modal-rules');
+      activateGameBackGuard();
+      return;
+    }
+    if (_isModalVisible('modal-settings')) {
+      _hideOpenModal('modal-settings');
+      activateGameBackGuard();
+      return;
+    }
+
+    // Priority 2: Prevent multiple confirmation dialogs if already visible
+    if (typeof TableUI !== 'undefined' && TableUI.isExitConfirmOpen && TableUI.isExitConfirmOpen()) {
+      activateGameBackGuard();
+      return;
+    }
+
+    // Priority 3: Close open in-game drawer menu first
+    if (typeof TableUI !== 'undefined' && TableUI.isInGameMenuOpen && TableUI.isInGameMenuOpen()) {
+      TableUI.closeInGameMenu();
+      activateGameBackGuard();
+      return;
+    }
+
+    // Priority 4: Keep back navigation guarded and open Leave Game confirmation
+    activateGameBackGuard();
+    if (typeof TableUI !== 'undefined' && TableUI.showExitConfirm) {
+      TableUI.showExitConfirm();
+    } else {
+      document.getElementById('confirm-exit')?.classList.remove('hidden');
     }
   }
 
@@ -82,6 +196,10 @@ const App = (() => {
   function init() {
     Screens.go('screen-menu');
     MenuUI.init();
+    if (!_backNavBound && typeof window !== 'undefined') {
+      window.addEventListener('popstate', _handlePopState);
+      _backNavBound = true;
+    }
     console.log('[KAZHUDHAI CLUB] Stage 3 Active: Core round gameplay online.');
   }
 
@@ -171,6 +289,7 @@ const App = (() => {
       GameClient.setState(state);
 
       Screens.go('screen-game');
+      activateGameBackGuard();
 
       TableUI.init({
         roomCode:   'OFFLINE',
@@ -353,7 +472,11 @@ const App = (() => {
     }
 
     // Pause briefly so the player sees the winning card and attack outcome
-    setTimeout(() => {
+    _clearRoundTimer();
+    _roundResolutionTimer = setTimeout(() => {
+      _roundResolutionTimer = null;
+      if (!GameClient.isActive()) return;
+
       // Collect played cards
       TableUI.clearPlayedCards(true);
       TableUI.hideAttackBanner();
@@ -362,7 +485,9 @@ const App = (() => {
       _renderState(nextState);
 
       if (nextState.status === 'finished') {
-        setTimeout(() => _showResults(nextState), 1200);
+        setTimeout(() => {
+          if (GameClient.isActive()) _showResults(nextState);
+        }, 1200);
       } else if (!nextState.is_my_turn) {
         _scheduleNextAiStep(1000);
       }
@@ -424,13 +549,20 @@ const App = (() => {
 
     // Check for game end
     if (state.status === 'finished') {
-      setTimeout(() => _showResults(state), 1400);
+      setTimeout(() => {
+        if (GameClient.isActive()) _showResults(state);
+      }, 1400);
     }
   }
 
   function _showResults(state) {
     _clearAiTimeout();
+    _clearRoundTimer();
+    if (typeof TableUI !== 'undefined' && TableUI.hideExitConfirm) {
+      TableUI.hideExitConfirm();
+    }
     Screens.go('screen-results');
+    _releaseGameBackGuard();
 
     const kazhudhaiName = document.getElementById('kazhudhai-name');
     const rankings      = document.getElementById('results-rankings');
@@ -498,6 +630,9 @@ const App = (() => {
       }
     }
     _renderState(state);
+    if (state.status === 'playing' && Screens.current() === 'screen-game') {
+      activateGameBackGuard();
+    }
     if (OnlineClient.getPlayerId()) {
       TableUI.updatePlayerStatus(OnlineClient.getPlayerId(), 'connected');
     }
@@ -609,8 +744,15 @@ const App = (() => {
     _clearAiTimeout();
     _clearRoundTimer();
     _isRoundPaused = false;
+    _pendingNextState = null;
     if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
       TableUI.resetPlayInFlight();
+    }
+    if (typeof TableUI !== 'undefined' && TableUI.hideExitConfirm) {
+      TableUI.hideExitConfirm();
+    }
+    if (typeof TableUI !== 'undefined' && TableUI.closeInGameMenu) {
+      TableUI.closeInGameMenu();
     }
     closeActivityDrawer();
     _unreadActivityCount = 0;
@@ -619,6 +761,7 @@ const App = (() => {
     OnlineClient.disconnect();
     GameClient.reset();
     Screens.go('screen-menu');
+    _releaseGameBackGuard();
   }
 
   function restartGame() {
@@ -664,6 +807,8 @@ const App = (() => {
     openActivityDrawer,
     closeActivityDrawer,
     showOnlineResults,
+    isActivelyPlayingGame,
+    activateGameBackGuard,
     exitToMenu,
     restartGame,
   };
