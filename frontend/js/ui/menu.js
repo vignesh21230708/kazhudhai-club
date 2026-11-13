@@ -383,8 +383,18 @@ const MenuUI = (() => {
     // In-game shortcuts
     const rulesIngame    = document.getElementById('btn-rules-ingame');
     const settingsIngame = document.getElementById('btn-settings-ingame');
-    if (rulesIngame)    rulesIngame.addEventListener('click', () => { showModal('modal-rules'); });
-    if (settingsIngame) settingsIngame.addEventListener('click', () => { showModal('modal-settings'); });
+    if (rulesIngame) {
+      rulesIngame.addEventListener('click', () => {
+        if (typeof TableUI !== 'undefined' && TableUI.closeInGameMenu) TableUI.closeInGameMenu();
+        showModal('modal-rules');
+      });
+    }
+    if (settingsIngame) {
+      settingsIngame.addEventListener('click', () => {
+        if (typeof TableUI !== 'undefined' && TableUI.closeInGameMenu) TableUI.closeInGameMenu();
+        showModal('modal-settings');
+      });
+    }
   }
 
   function _applyTheme(theme) {
@@ -576,12 +586,22 @@ const MenuUI = (() => {
   // ── Modal Helpers ──
   function showModal(id) {
     const el = document.getElementById(id);
-    if (el) el.classList.remove('hidden');
+    if (!el) return;
+    const wasHidden = el.classList.contains('hidden');
+    el.classList.remove('hidden');
+    if (wasHidden && typeof App !== 'undefined' && typeof App.onModalOpened === 'function') {
+      App.onModalOpened(id);
+    }
   }
 
-  function hideModal(id) {
+  function hideModal(id, options) {
     const el = document.getElementById(id);
-    if (el) el.classList.add('hidden');
+    if (!el) return;
+    const wasVisible = !el.classList.contains('hidden');
+    el.classList.add('hidden');
+    if (wasVisible && typeof App !== 'undefined' && typeof App.onModalClosed === 'function') {
+      App.onModalClosed(id, options);
+    }
   }
 
   return {

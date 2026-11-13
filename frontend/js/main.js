@@ -61,6 +61,7 @@ const App = (() => {
   let _pendingNextState = null;
   let _unreadActivityCount = 0;
   let _hasGameBackGuard = false;
+  let _activeModalGuard = null;
   let _suppressNextPopCount = 0;
   let _suppressResetTimer = null;
   let _backNavBound = false;
@@ -72,16 +73,36 @@ const App = (() => {
     }
   }
 
+  const MAIN_MENU_MODALS = [
+    'modal-offline-setup',
+    'modal-online-lobby',
+    'modal-rules',
+    'modal-settings',
+  ];
+
+  function _isSupportedModal(modalId) {
+    return MAIN_MENU_MODALS.includes(modalId);
+  }
+
   function _isModalVisible(modalId) {
     const el = document.getElementById(modalId);
     return !!(el && !el.classList.contains('hidden'));
   }
 
-  function _hideOpenModal(modalId) {
+  function _getOpenModalId() {
+    for (const id of MAIN_MENU_MODALS) {
+      if (_isModalVisible(id)) return id;
+    }
+    return null;
+  }
+
+  function _hideOpenModal(modalId, options) {
     if (typeof MenuUI !== 'undefined' && typeof MenuUI.hideModal === 'function') {
-      MenuUI.hideModal(modalId);
+      MenuUI.hideModal(modalId, options);
     } else {
-      document.getElementById(modalId)?.classList.add('hidden');
+      const el = document.getElementById(modalId);
+      if (el) el.classList.add('hidden');
+      onModalClosed(modalId, options);
     }
   }
 
@@ -115,18 +136,98 @@ const App = (() => {
     _hasGameBackGuard = true;
   }
 
-  function _releaseGameBackGuard() {
-    _hasGameBackGuard = false;
-    if (typeof window === 'undefined' || !window.history) return;
+  function onModalOpened(modalId) {
+    if (!_isSupportedModal(modalId)) {
+      return;
+    }
+    if (typeof window === 'undefined' || !window.history || typeof window.history.pushState !== 'function') {
+      return;
+    }
 
-    if (window.history.state && window.history.state.kzBackGuard === 'game') {
+    const inGame = isActivelyPlayingGame();
+    if (inGame) {
+      // Ensure base game back guard exists first
+      activateGameBackGuard();
+    }
+
+    // Prevent duplicate entries for the same modal
+    if (_activeModalGuard === modalId) {
+      return;
+    }
+
+    const statePayload = { kzModalGuard: modalId };
+    if (inGame) {
+      statePayload.kzBackGuard = 'game';
+    }
+
+    const baseState = Object.assign({}, window.history.state || {});
+    if (!inGame) {
+      delete baseState.kzBackGuard;
+    }
+
+    // If another modal entry is already active, replace it so we never stack multiple modal entries
+    if (_activeModalGuard || (window.history.state && window.history.state.kzModalGuard)) {
+      _activeModalGuard = modalId;
+      const nextState = Object.assign(baseState, statePayload);
+      if (typeof window.history.replaceState === 'function') {
+        window.history.replaceState(nextState, '', window.location.href);
+      }
+      return;
+    }
+
+    // Push dedicated modal history entry
+    _activeModalGuard = modalId;
+    const nextState = Object.assign(baseState, statePayload);
+    window.history.pushState(nextState, '', window.location.href);
+  }
+
+  function onModalClosed(modalId, options) {
+    if (!_isSupportedModal(modalId)) {
+      return;
+    }
+
+    // If closed via Back button (popstate), the modal history entry was already consumed by the browser
+    if (options && options.fromPopState) {
+      if (_activeModalGuard === modalId) {
+        _activeModalGuard = null;
+      }
+      return;
+    }
+
+    // Modal was closed manually (X button, backdrop click, or programmatic close)
+    const isGuardedState = !!(typeof window !== 'undefined' && window.history && window.history.state && window.history.state.kzModalGuard === modalId);
+    if (_activeModalGuard === modalId || isGuardedState) {
+      _activeModalGuard = null;
       _suppressNextPopCount += 1;
       if (_suppressResetTimer) clearTimeout(_suppressResetTimer);
       _suppressResetTimer = setTimeout(() => {
         _suppressNextPopCount = 0;
         _suppressResetTimer = null;
-      }, 150);
+      }, 300);
       window.history.back();
+    }
+  }
+
+  function _releaseGameBackGuard() {
+    _activeModalGuard = null;
+    _hasGameBackGuard = false;
+    if (typeof window === 'undefined' || !window.history) return;
+
+    const hasModal = !!(window.history.state && window.history.state.kzModalGuard);
+    const hasGame = !!(window.history.state && window.history.state.kzBackGuard === 'game');
+    if (hasModal || hasGame) {
+      const delta = (hasModal && hasGame) ? -2 : -1;
+      _suppressNextPopCount += 1;
+      if (_suppressResetTimer) clearTimeout(_suppressResetTimer);
+      _suppressResetTimer = setTimeout(() => {
+        _suppressNextPopCount = 0;
+        _suppressResetTimer = null;
+      }, 300);
+      if (typeof window.history.go === 'function') {
+        window.history.go(delta);
+      } else if (typeof window.history.back === 'function') {
+        window.history.back();
+      }
     }
   }
 
@@ -137,28 +238,45 @@ const App = (() => {
         clearTimeout(_suppressResetTimer);
         _suppressResetTimer = null;
       }
+      _hasGameBackGuard = !!(window.history.state && window.history.state.kzBackGuard === 'game');
+      const visibleModal = _getOpenModalId();
+      if (visibleModal && !_activeModalGuard) {
+        onModalOpened(visibleModal);
+      }
       return;
     }
 
-    // Browser popped the history entry
-    _hasGameBackGuard = false;
+    // Priority 1: If any popup modal was open or guarded, Back button must close that modal first
+    const modalToClose = _activeModalGuard || _getOpenModalId();
 
-    // Retain normal navigation when no game is active
+    if (modalToClose) {
+      _activeModalGuard = null;
+      _hideOpenModal(modalToClose, { fromPopState: true });
+      MAIN_MENU_MODALS.forEach(id => {
+        if (_isModalVisible(id)) _hideOpenModal(id, { fromPopState: true });
+      });
+
+      // If in active gameplay, verify base game guard is active on the current history entry
+      if (isActivelyPlayingGame()) {
+        _hasGameBackGuard = !!(window.history.state && window.history.state.kzBackGuard === 'game');
+        if (!_hasGameBackGuard) {
+          activateGameBackGuard();
+        }
+      } else {
+        _hasGameBackGuard = false;
+      }
+      return;
+    }
+
+    // Retain normal navigation when no game is active (and no modal is open)
     if (!isActivelyPlayingGame()) {
+      _hasGameBackGuard = false;
+      _activeModalGuard = null;
       return;
     }
 
-    // Priority 1: Close open Rules or Settings modal before prompting to leave
-    if (_isModalVisible('modal-rules')) {
-      _hideOpenModal('modal-rules');
-      activateGameBackGuard();
-      return;
-    }
-    if (_isModalVisible('modal-settings')) {
-      _hideOpenModal('modal-settings');
-      activateGameBackGuard();
-      return;
-    }
+    // Browser popped the game entry
+    _hasGameBackGuard = false;
 
     // Priority 2: Prevent multiple confirmation dialogs if already visible
     if (typeof TableUI !== 'undefined' && TableUI.isExitConfirmOpen && TableUI.isExitConfirmOpen()) {
@@ -558,6 +676,9 @@ const App = (() => {
   function _showResults(state) {
     _clearAiTimeout();
     _clearRoundTimer();
+    if (typeof MenuUI !== 'undefined' && typeof MenuUI.hideModal === 'function') {
+      MAIN_MENU_MODALS.forEach(id => MenuUI.hideModal(id, { fromPopState: true }));
+    }
     if (typeof TableUI !== 'undefined' && TableUI.hideExitConfirm) {
       TableUI.hideExitConfirm();
     }
@@ -745,6 +866,9 @@ const App = (() => {
     _clearRoundTimer();
     _isRoundPaused = false;
     _pendingNextState = null;
+    if (typeof MenuUI !== 'undefined' && typeof MenuUI.hideModal === 'function') {
+      MAIN_MENU_MODALS.forEach(id => MenuUI.hideModal(id, { fromPopState: true }));
+    }
     if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
       TableUI.resetPlayInFlight();
     }
@@ -809,6 +933,8 @@ const App = (() => {
     showOnlineResults,
     isActivelyPlayingGame,
     activateGameBackGuard,
+    onModalOpened,
+    onModalClosed,
     exitToMenu,
     restartGame,
   };
