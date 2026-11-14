@@ -258,6 +258,22 @@
   color: #fff;
 }
 
+.self-pos-badge {
+  font-size: 0.65rem;
+  font-family: var(--font-heading);
+  font-weight: 800;
+  color: #fff;
+  background: rgba(42, 122, 60, 0.9);
+  border: 1px solid #55dd88;
+  border-radius: 4px;
+  padding: 1px 5px;
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
 .opponent-slot.is-self .opponent-avatar {
   box-shadow: 0 0 12px rgba(85, 221, 136, 0.5), inset 0 0 8px rgba(201, 168, 76, 0.3);
   border: 2px solid #55dd88;
@@ -399,7 +415,7 @@
 
 .opponents-left {
   grid-area: left;
-  flex-direction: column;
+  flex-direction: column-reverse;
   align-items: flex-start;
   justify-content: space-evenly;
   padding-left: 6px;

@@ -28,6 +28,7 @@ const TableUI = (() => {
     DOM.selfAttackZone = document.getElementById('self-collected-zone');
     DOM.selfAttackCount= document.getElementById('self-attack-count');
     DOM.selfStatusBadge= document.getElementById('self-status-badge');
+    DOM.selfPosBadge   = document.getElementById('self-pos-badge');
     DOM.playBtn        = document.getElementById('btn-play-card');
     DOM.actionHint     = document.getElementById('action-hint');
     DOM.ingameMenu     = document.getElementById('ingame-menu');
@@ -68,6 +69,27 @@ const TableUI = (() => {
     const count = _getCardCount(player);
     return `${count} ${count === 1 ? 'card' : 'cards'}`;
   }
+  // ── Synchronize SAFE badge on avatar element without duplicating ──
+  function _syncSafeBadge(avatarEl, isSafe) {
+    if (!avatarEl) return;
+    avatarEl.classList.toggle('safe', !!isSafe);
+    const existingBadges = avatarEl.querySelectorAll('.opponent-safe-badge');
+    if (isSafe) {
+      if (existingBadges.length === 0) {
+        const badge = document.createElement('div');
+        badge.className = 'opponent-safe-badge';
+        badge.textContent = 'SAFE';
+        avatarEl.appendChild(badge);
+      } else if (existingBadges.length > 1) {
+        for (let i = 1; i < existingBadges.length; i++) {
+          existingBadges[i].remove();
+        }
+      }
+    } else {
+      existingBadges.forEach(b => b.remove());
+    }
+  }
+
 
   // ── In-game slide-out menu controls ──
   function openInGameMenu() {
@@ -124,6 +146,10 @@ const TableUI = (() => {
 
     DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
     DOM.attackBanner.classList.add('hidden');
+    if (DOM.selfAvatar) {
+      DOM.selfAvatar.classList.remove('active-turn');
+      _syncSafeBadge(DOM.selfAvatar, false);
+    }
     updateCommonPile(0);
 
     _bindTableEvents();
@@ -373,18 +399,18 @@ const TableUI = (() => {
       case 1:
         return { top: 1, left: 0, right: 0 };
       case 2:
-        return { top: 2, left: 0, right: 0 };
+        return { top: 0, left: 1, right: 1 };
       case 3:
         return { top: 1, left: 1, right: 1 };
       case 4:
         return { top: 2, left: 1, right: 1 };
       case 5:
-        return { top: 3, left: 1, right: 1 };
+        return { top: 1, left: 2, right: 2 };
       case 6:
         return { top: 2, left: 2, right: 2 };
       default: {
-        const side = Math.max(0, Math.floor((count - 1) / 3));
-        const top = Math.max(1, count - side * 2);
+        const side = Math.max(0, Math.floor(count / 3));
+        const top = Math.max(0, count - side * 2);
         return { top, left: side, right: side };
       }
     }
@@ -418,24 +444,60 @@ const TableUI = (() => {
       tableInner.className = `table-inner players-${totalPlayers}`;
     }
 
-    const dist = _getTableDistribution(totalPlayers);
+    // Determine the local player index using existing player IDs
+    const effectiveMyId = myId || (typeof OnlineClient !== 'undefined' && OnlineClient.getPlayerId ? OnlineClient.getPlayerId() : null);
+    let localIndex = -1;
+    if (effectiveMyId) {
+      localIndex = players.findIndex(p => p.id === effectiveMyId);
+    }
+    if (localIndex === -1 && effectiveMyId !== 'human') {
+      localIndex = players.findIndex(p => p.id === 'human');
+    }
+    if (localIndex === -1) return;
 
-    const leftPlayers  = players.slice(0, dist.left);
-    const topPlayers   = players.slice(dist.left, dist.left + dist.top);
-    const rightPlayers = players.slice(dist.left + dist.top, dist.left + dist.top + dist.right);
+    const localPlayer = players[localIndex];
 
-    // Append to respective table zones in strictly consistent order
-    leftPlayers.forEach((p, idx) => {
-      const posNum = idx + 1;
-      DOM.opponentsLeft.appendChild(_createPlayerSlot(p, 'left', posNum, p.id === myId));
+    // Show local player at bottom (#player-self-area) with fixed P1 badge
+    if (localPlayer) {
+      if (!DOM.selfPosBadge) DOM.selfPosBadge = document.getElementById('self-pos-badge');
+      if (DOM.selfPosBadge) DOM.selfPosBadge.textContent = 'P1';
+      if (DOM.selfName) DOM.selfName.textContent = `${localPlayer.name} (You)`;
+      if (DOM.selfCardCount) DOM.selfCardCount.textContent = _formatCardCountText(localPlayer);
+      if (DOM.selfAvatar) {
+        DOM.selfAvatar.classList.toggle('active-turn', !!localPlayer.isActive);
+        _syncSafeBadge(DOM.selfAvatar, localPlayer.isSafe);
+      }
+      if (localPlayer.connection_status) {
+        updatePlayerStatus(localPlayer.id, localPlayer.connection_status);
+      }
+    }
+
+    // Arrange remaining players clockwise relative to local player in original joining order:
+    // Next player -> Left, Following -> Top, Following -> Right, continuing for 5-7 players
+    const opponents = [];
+    for (let i = 1; i < totalPlayers; i++) {
+      const oppIdx = (localIndex + i) % totalPlayers;
+      opponents.push({
+        player: players[oppIdx],
+        seatNum: i + 1,
+      });
+    }
+
+    const dist = _getOpponentDistribution(opponents.length);
+
+    const leftPlayers  = opponents.slice(0, dist.left);
+    const topPlayers   = opponents.slice(dist.left, dist.left + dist.top);
+    const rightPlayers = opponents.slice(dist.left + dist.top, dist.left + dist.top + dist.right);
+
+    // Append to respective table zones in strictly clockwise order with fixed visual seat numbers
+    leftPlayers.forEach((item) => {
+      DOM.opponentsLeft.appendChild(_createPlayerSlot(item.player, 'left', item.seatNum, false));
     });
-    topPlayers.forEach((p, idx) => {
-      const posNum = dist.left + idx + 1;
-      DOM.opponentsTop.appendChild(_createPlayerSlot(p, 'top', posNum, p.id === myId));
+    topPlayers.forEach((item) => {
+      DOM.opponentsTop.appendChild(_createPlayerSlot(item.player, 'top', item.seatNum, false));
     });
-    rightPlayers.forEach((p, idx) => {
-      const posNum = dist.left + dist.top + idx + 1;
-      DOM.opponentsRight.appendChild(_createPlayerSlot(p, 'right', posNum, p.id === myId));
+    rightPlayers.forEach((item) => {
+      DOM.opponentsRight.appendChild(_createPlayerSlot(item.player, 'right', item.seatNum, false));
     });
   }
 
@@ -517,6 +579,21 @@ const TableUI = (() => {
 
   // ── Update one opponent's card count and turn state ──
   function updateOpponent(opp) {
+    if (!opp) return;
+
+    const myId = (typeof OnlineClient !== 'undefined' && OnlineClient.getPlayerId ? OnlineClient.getPlayerId() : null) || 'human';
+    if (opp.id === myId) {
+      if (DOM.selfCardCount) DOM.selfCardCount.textContent = _formatCardCountText(opp);
+      if (DOM.selfAvatar) {
+        DOM.selfAvatar.classList.toggle('active-turn', !!opp.isActive);
+        _syncSafeBadge(DOM.selfAvatar, opp.isSafe);
+      }
+      if (opp.connection_status) {
+        updatePlayerStatus(opp.id, opp.connection_status);
+      }
+      return;
+    }
+
     const cardCount = _getCardCount(opp);
     const countEl = document.getElementById(`opp-count-${opp.id}`);
     if (countEl) countEl.textContent = _formatCardCountText(opp);
@@ -524,14 +601,7 @@ const TableUI = (() => {
     const avatarEl = document.getElementById(`opp-avatar-${opp.id}`);
     if (avatarEl) {
       avatarEl.classList.toggle('active-turn', !!opp.isActive);
-      avatarEl.classList.toggle('safe', !!opp.isSafe);
-
-      if (opp.isSafe && !avatarEl.querySelector('.opponent-safe-badge')) {
-        const badge = document.createElement('div');
-        badge.className = 'opponent-safe-badge';
-        badge.textContent = 'SAFE';
-        avatarEl.appendChild(badge);
-      }
+      _syncSafeBadge(avatarEl, opp.isSafe);
     }
 
     const fan = document.getElementById(`opp-fan-${opp.id}`);
@@ -597,13 +667,7 @@ const TableUI = (() => {
     if (_myHand.length === 0) {
       _selectedCardId = null;
       DOM.handRow.innerHTML = '<div class="empty-zone-hint" style="color:#55dd88; font-weight:700; font-size:0.9rem; padding: 20px 0;">🎉 You emptied your hand and are SAFE! Watching remaining players…</div>';
-      DOM.selfAvatar.classList.add('safe');
-      if (!DOM.selfAvatar.querySelector('.opponent-safe-badge')) {
-        const badge = document.createElement('div');
-        badge.className = 'opponent-safe-badge';
-        badge.textContent = 'SAFE';
-        DOM.selfAvatar.appendChild(badge);
-      }
+      _syncSafeBadge(DOM.selfAvatar, true);
       _updateActionBar(false, null);
 
       const actionBar = document.getElementById('action-bar');
