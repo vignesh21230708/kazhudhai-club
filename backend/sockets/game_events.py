@@ -66,6 +66,7 @@ def register_socket_events(socketio):
         room = room_manager.get_room(room_code)
         if room and player_id in room.players:
             player = room.players[player_id]
+            player.connected = False
             player.status = 'reconnecting'
             player.departure_notified = True
 
@@ -332,6 +333,45 @@ def register_socket_events(socketio):
             emit('game_state', room.game_state.get_state_for_player(player_id))
             return {'success': True}
         return {'success': False, 'message': 'Room not found'}
+
+    @socketio.on('send_lobby_chat')
+    def handle_send_lobby_chat(data):
+        try:
+            room_code    = (data.get('roomCode') or '').strip().upper()
+            player_id    = data.get('playerId')
+            message_text = (data.get('message') or '').strip()
+
+            if not message_text:
+                return {'success': False, 'message': 'Message cannot be empty'}
+            if len(message_text) > 150:
+                message_text = message_text[:150]
+
+            room = room_manager.get_room(room_code)
+            if not room:
+                return {'success': False, 'message': 'Room not found'}
+
+            # Strict server-side lobby enforcement: chat disabled once game starts
+            if room.status != 'waiting':
+                return {'success': False, 'message': 'Chat is only available in the lobby'}
+
+            # Validate against actual room membership
+            if not player_id or player_id not in room.players:
+                return {'success': False, 'message': 'Player not in room'}
+
+            player = room.players[player_id]
+            if not player.connected or player.status != 'connected':
+                return {'success': False, 'message': 'Player is not active in the room'}
+
+            chat_msg = room.add_chat_message(
+                sender_id=player.id,
+                sender_name=player.name,
+                text=message_text,
+            )
+
+            emit('lobby_chat_message', chat_msg, room=room.code)
+            return {'success': True, 'message': chat_msg}
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
 
     @socketio.on('send_reaction')
     def handle_send_reaction(data):

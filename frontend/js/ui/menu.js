@@ -473,6 +473,22 @@ const MenuUI = (() => {
         OnlineClient.startGame();
       });
     }
+
+    const chatForm = document.getElementById('lobby-chat-form');
+    const chatInput = document.getElementById('lobby-chat-input');
+    if (chatForm && chatInput) {
+      chatForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = chatInput.value.trim();
+        if (!text) return;
+        OnlineClient.sendLobbyChatMessage(text, (res) => {
+          if (res && !res.success) {
+            showToast(res.message || 'Failed to send message', 'error', 2000);
+          }
+        });
+        chatInput.value = '';
+      });
+    }
   }
 
   function showWaitingRoom(roomSummary, myPlayerId) {
@@ -604,6 +620,50 @@ const MenuUI = (() => {
     }
   }
 
+  function addLobbyChatMessage(msg, myPlayerId) {
+    if (!msg) return;
+    const listEl = document.getElementById('lobby-chat-messages');
+    if (!listEl) return;
+
+    // Remove empty placeholder
+    const hint = listEl.querySelector('.empty-chat-hint');
+    if (hint) hint.remove();
+
+    const isSelf = (myPlayerId && msg.sender_id === myPlayerId);
+    const item = document.createElement('div');
+    item.className = `lobby-chat-msg${isSelf ? ' is-self' : ''}`;
+
+    const senderSpan = document.createElement('span');
+    senderSpan.className = 'lobby-chat-sender';
+    senderSpan.textContent = isSelf ? `${msg.sender_name} (You):` : `${msg.sender_name}:`;
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'lobby-chat-text';
+    textSpan.textContent = msg.text || '';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'lobby-chat-time';
+    timeSpan.textContent = msg.timestamp || '';
+
+    item.appendChild(senderSpan);
+    item.appendChild(textSpan);
+    item.appendChild(timeSpan);
+
+    listEl.appendChild(item);
+    listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  function clearLobbyChat() {
+    const listEl = document.getElementById('lobby-chat-messages');
+    if (listEl) {
+      listEl.innerHTML = '<div class="empty-chat-hint">No messages yet. Say hello to your opponents!</div>';
+    }
+    const inputEl = document.getElementById('lobby-chat-input');
+    if (inputEl) {
+      inputEl.value = '';
+    }
+  }
+
   return {
     init,
     showModal,
@@ -611,5 +671,7 @@ const MenuUI = (() => {
     showWaitingRoom,
     updateWaitingRoom,
     hideWaitingRoom,
+    addLobbyChatMessage,
+    clearLobbyChat,
   };
 })();

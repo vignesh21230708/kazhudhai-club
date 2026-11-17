@@ -56,6 +56,8 @@ class TestMultiplayerImprovements(unittest.TestCase):
 
         # Inspect personalized game states received by EACH device
         clients = [c1, c2, c3, c4]
+        first_device_ids = None
+        first_device_names = None
         for idx, client in enumerate(clients):
             events = client.get_received()
             state_events = [e for e in events if e['name'] == 'game_state']
@@ -67,12 +69,22 @@ class TestMultiplayerImprovements(unittest.TestCase):
             received_names = [p['name'] for p in state['players']]
             positions = [p.get('position') for p in state['players']]
 
-            self.assertEqual(received_ids, expected_order_ids,
-                             f"Device {idx+1} player ID ordering mismatch: {received_ids} vs {expected_order_ids}")
-            self.assertEqual(received_names, expected_names,
-                             f"Device {idx+1} player names mismatch: {received_names} vs {expected_names}")
+            # All joined players must be present exactly once in the finalized order
+            self.assertEqual(set(received_ids), set(expected_order_ids),
+                             f"Device {idx+1} missing players: {received_ids} vs {expected_order_ids}")
+            self.assertEqual(set(received_names), set(expected_names),
+                             f"Device {idx+1} player names set mismatch")
             self.assertEqual(positions, [1, 2, 3, 4],
                              f"Device {idx+1} positions mismatch: {positions}")
+
+            if first_device_ids is None:
+                first_device_ids = received_ids
+                first_device_names = received_names
+            else:
+                self.assertEqual(received_ids, first_device_ids,
+                                 f"Device {idx+1} order must match Device 1 order: {received_ids} vs {first_device_ids}")
+                self.assertEqual(received_names, first_device_names,
+                                 f"Device {idx+1} names must match Device 1 names")
 
         c1.disconnect()
         c2.disconnect()

@@ -47,6 +47,7 @@ class Room:
         self.host_id: str | None = None
         self.game_state: GameState | None = None
         self.activity_log: list[dict] = []  # Chronological game activity entries
+        self.chat_messages: list[dict] = []  # Lobby-only real-time chat messages
 
     @property
     def player_count(self) -> int:
@@ -74,6 +75,29 @@ class Room:
         if len(self.activity_log) > 200:
             self.activity_log.pop(0)
         return entry
+
+    def add_chat_message(self, sender_id: str, sender_name: str, text: str) -> dict:
+        """Record a chat message while in lobby."""
+        if self.status != 'waiting':
+            raise ValueError("Chat is available only in the lobby")
+        if sender_id not in self.players:
+            raise ValueError("Sender is not a member of this room")
+        player = self.players[sender_id]
+        if not player.connected or player.status != 'connected':
+            raise ValueError("Player is not active in the room")
+        now = datetime.now()
+        msg = {
+            'id':          uuid.uuid4().hex[:8],
+            'sender_id':   sender_id,
+            'sender_name': sender_name,
+            'text':        text.strip(),
+            'timestamp':   now.strftime("%I:%M %p"),
+            'iso_time':    now.isoformat(),
+        }
+        self.chat_messages.append(msg)
+        if len(self.chat_messages) > 100:
+            self.chat_messages.pop(0)
+        return msg
 
     def add_player(self, name: str, sid: str | None = None, is_host: bool = False) -> RoomPlayer:
         if len(self.players) >= self.max_players:
@@ -248,10 +272,14 @@ class RoomManager:
         if room.status == 'playing':
             raise ValueError("Game is already in progress")
 
-        # Create player configurations preserving table order
+        # Randomly shuffle player order exactly ONCE when match starts
+        player_list = list(room.players.values())
+        random.shuffle(player_list)
+
+        # Create player configurations using the finalized shuffled order
         player_configs = [
             {'id': p.id, 'name': p.name, 'is_ai': False}
-            for p in room.players.values()
+            for p in player_list
         ]
 
         game_state = GameState(
@@ -260,6 +288,9 @@ class RoomManager:
             num_decks=room.deck_count,
         )
         game_state.setup()
+
+        # Clear lobby chat history when match starts (chat is disabled during gameplay)
+        room.chat_messages.clear()
 
         room.game_state = game_state
         room.status = 'playing'

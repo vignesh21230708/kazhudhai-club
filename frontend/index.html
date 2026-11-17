@@ -292,6 +292,21 @@
         </div>
       </div>
 
+      <!-- Real-time Lobby Chat Section -->
+      <div class="lobby-chat-box" id="lobby-chat-box">
+        <div class="lobby-chat-header">
+          <span class="lobby-chat-title">💬 Lobby Chat</span>
+          <span class="lobby-chat-notice">Chat is available only in the lobby. Once the match starts, lobby chat is no longer accessible.</span>
+        </div>
+        <div class="lobby-chat-messages" id="lobby-chat-messages">
+          <div class="empty-chat-hint">No messages yet. Say hello to your opponents!</div>
+        </div>
+        <form class="lobby-chat-form" id="lobby-chat-form">
+          <input type="text" class="lobby-chat-input" id="lobby-chat-input" placeholder="Type a message…" maxlength="150" autocomplete="off" />
+          <button type="submit" class="lobby-chat-send-btn" id="btn-send-lobby-chat">Send</button>
+        </form>
+      </div>
+
       <div class="waiting-status-notice" id="waiting-status-notice">
         Waiting for host to start the game… (min 2 players required)
       </div>

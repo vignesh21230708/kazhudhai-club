@@ -112,6 +112,9 @@ const OnlineClient = (() => {
 
     // Game started signal
     _socket.on('game_started', (data) => {
+      if (typeof MenuUI !== 'undefined' && MenuUI.clearLobbyChat) {
+        MenuUI.clearLobbyChat();
+      }
       MenuUI.hideWaitingRoom();
       Screens.go('screen-game');
       if (typeof App !== 'undefined' && App.activateGameBackGuard) {
@@ -178,6 +181,13 @@ const OnlineClient = (() => {
     _socket.on('player_reaction', (data) => {
       if (App && App.handlePlayerReaction) {
         App.handlePlayerReaction(data);
+      }
+    });
+
+    // Real-time lobby chat messages
+    _socket.on('lobby_chat_message', (msg) => {
+      if (typeof MenuUI !== 'undefined' && MenuUI.addLobbyChatMessage) {
+        MenuUI.addLobbyChatMessage(msg, _playerId);
       }
     });
 
@@ -465,9 +475,34 @@ const OnlineClient = (() => {
   }
 
   /**
+   * Send a real-time lobby chat message.
+   */
+  function sendLobbyChatMessage(message, callback) {
+    if (!_socket || !_roomCode || !_playerId) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Not connected to room' });
+      return;
+    }
+    const text = (message || '').trim();
+    if (!text) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Message cannot be empty' });
+      return;
+    }
+    _socket.emit('send_lobby_chat', {
+      roomCode: _roomCode,
+      playerId: _playerId,
+      message: text,
+    }, (res) => {
+      if (typeof callback === 'function') callback(res);
+    });
+  }
+
+  /**
    * Leave the waiting room or game.
    */
   function leaveRoom(reason = 'left', onComplete) {
+    if (typeof MenuUI !== 'undefined' && MenuUI.clearLobbyChat) {
+      MenuUI.clearLobbyChat();
+    }
     if (_socket && _roomCode && _playerId) {
       _socket.emit('leave_room', {
         roomCode: _roomCode,
@@ -511,6 +546,7 @@ const OnlineClient = (() => {
     restartGame,
     playCard,
     sendReaction,
+    sendLobbyChatMessage,
     leaveRoom,
     reconnectSession,
     disconnect,
