@@ -143,8 +143,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Static icons/images use Stale-While-Revalidate for instant display with background refresh
-  if (url.pathname.startsWith('/assets/')) {
+  // Static icons/images and vendor libraries use Stale-While-Revalidate for instant display with background refresh
+  if (url.pathname.startsWith('/assets/') || url.pathname.startsWith('/js/lib/')) {
     event.respondWith(_staleWhileRevalidate(event));
     return;
   }

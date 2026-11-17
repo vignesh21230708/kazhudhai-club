@@ -12,6 +12,7 @@ const OnlineClient = (() => {
   let _isHost         = false;
   let _reconnectToken = null;
   let _isReconnecting = false;
+  let _initPromise    = null;
 
   function isConnected() {
     return !!_socket && _socket.connected;
@@ -44,20 +45,67 @@ const OnlineClient = (() => {
   }
 
   /**
-   * Initialize socket connection if not already created.
+   * Wait for window.io to be available (e.g. while local script or CDN fallback finishes loading).
+   * Resolves immediately if io is already defined.
+   * Checks every 50ms and listens to script load events, up to maxWaitMs (default 3000ms).
+   * Rejects if timeout is reached.
    */
-  function _ensureSocket() {
-    if (_socket) return _socket;
-
-    if (typeof io === 'undefined') {
-      showToast('Socket.IO library failed to load. Please check your connection.', 'error');
-      _updateConnectionStatusUI('disconnected', '🔴 Socket.IO library missing');
-      return null;
+  function _waitForSocketIO(maxWaitMs = 3000) {
+    if (typeof io !== 'undefined') {
+      return Promise.resolve(io);
     }
+
+    return new Promise((resolve, reject) => {
+      const startTime = Date.now();
+      let intervalId = null;
+
+      const cleanup = () => {
+        if (intervalId) {
+          clearInterval(intervalId);
+          intervalId = null;
+        }
+        if (typeof window !== 'undefined' && window.removeEventListener) {
+          window.removeEventListener('load', onCheck);
+        }
+      };
+
+      const onCheck = () => {
+        if (typeof io !== 'undefined') {
+          cleanup();
+          resolve(io);
+          return;
+        }
+        if (Date.now() - startTime >= maxWaitMs) {
+          cleanup();
+          reject(new Error('Socket.IO library failed to load within timeout'));
+        }
+      };
+
+      intervalId = setInterval(onCheck, 50);
+
+      if (typeof window !== 'undefined' && window.addEventListener) {
+        window.addEventListener('load', onCheck);
+      }
+      if (typeof document !== 'undefined' && document.querySelectorAll) {
+        try {
+          const scripts = document.querySelectorAll('script');
+          scripts.forEach((s) => {
+            s.addEventListener('load', onCheck, { once: true });
+          });
+        } catch (_) {}
+      }
+    });
+  }
+
+  /**
+   * Internal constructor for the Socket.IO instance and its event listeners.
+   */
+  function _setupSocketInstance() {
+    if (_socket) return _socket;
 
     _updateConnectionStatusUI('reconnecting', 'Connecting to server…');
 
-    const serverUrl = (window.location.protocol === 'file:' || !window.location.host)
+    const serverUrl = (typeof window !== 'undefined' && (window.location.protocol === 'file:' || !window.location.host))
       ? 'http://localhost:5000'
       : undefined;
 
@@ -204,47 +252,98 @@ const OnlineClient = (() => {
     return _socket;
   }
 
-  // Network state listeners for unexpected connection loss
-  window.addEventListener('offline', () => {
-    console.warn('[OnlineClient] Network offline detected');
-    if (_socket && _socket.connected && _roomCode && _playerId) {
-      _socket.emit('client_connection_lost', {
-        roomCode: _roomCode,
-        playerId: _playerId,
-      });
+  /**
+   * Asynchronously ensure socket instance is created, waiting up to maxWaitMs
+   * for the Socket.IO library to finish loading if needed.
+   * Prevents duplicate initialization attempts.
+   */
+  function _ensureSocketAsync(maxWaitMs = 3000) {
+    if (_socket) {
+      return Promise.resolve(_socket);
     }
-    if (typeof TableUI !== 'undefined') {
-      TableUI.updatePlayerStatus(_playerId, 'reconnecting');
+    if (_initPromise) {
+      return _initPromise;
     }
-  });
 
-  window.addEventListener('online', () => {
-    console.log('[OnlineClient] Network online restored');
-    if (_socket && !_socket.connected) {
-      _socket.connect();
-    }
-  });
+    _initPromise = _waitForSocketIO(maxWaitMs)
+      .then(() => {
+        const socket = _setupSocketInstance();
+        _initPromise = null;
+        return socket;
+      })
+      .catch((err) => {
+        _initPromise = null;
+        if (typeof showToast === 'function') {
+          showToast('Socket.IO library failed to load. Please check your connection.', 'error');
+        }
+        _updateConnectionStatusUI('disconnected', '🔴 Socket.IO library missing');
+        console.error('[OnlineClient] Failed to load Socket.IO library:', err);
+        throw err;
+      });
+
+    return _initPromise;
+  }
 
   /**
-   * Pre-warm / initialize socket connection.
+   * Synchronously return existing socket instance, or initialize if io is defined.
+   * If io is not yet defined, triggers asynchronous wait and returns null.
+   */
+  function _ensureSocket() {
+    if (_socket) return _socket;
+    if (typeof io !== 'undefined') {
+      return _setupSocketInstance();
+    }
+    _ensureSocketAsync(3000).catch(() => {});
+    return null;
+  }
+
+  // Network state listeners for unexpected connection loss
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('offline', () => {
+      console.warn('[OnlineClient] Network offline detected');
+      if (_socket && _socket.connected && _roomCode && _playerId) {
+        _socket.emit('client_connection_lost', {
+          roomCode: _roomCode,
+          playerId: _playerId,
+        });
+      }
+      if (typeof TableUI !== 'undefined') {
+        TableUI.updatePlayerStatus(_playerId, 'reconnecting');
+      }
+    });
+
+    window.addEventListener('online', () => {
+      console.log('[OnlineClient] Network online restored');
+      if (_socket && !_socket.connected) {
+        _socket.connect();
+      }
+    });
+  }
+
+  /**
+   * Pre-warm / initialize socket connection with up to 3 seconds wait for library.
+   * Deduplicates concurrent initialization attempts.
    */
   function initConnection() {
-    return _ensureSocket();
+    return _ensureSocketAsync(3000);
   }
 
   /**
    * Ensure socket is connected before emitting, waiting with a timeout if connecting.
    */
-  function _ensureConnected(timeoutMs = 7000) {
-    return new Promise((resolve, reject) => {
-      const socket = _ensureSocket();
-      if (!socket) {
-        return reject(new Error('Socket.IO library not loaded'));
-      }
-      if (socket.connected) {
-        return resolve(socket);
-      }
+  async function _ensureConnected(timeoutMs = 7000) {
+    let socket = _socket;
+    if (!socket) {
+      socket = await _ensureSocketAsync(3000);
+    }
+    if (!socket) {
+      throw new Error('Socket.IO library not loaded');
+    }
+    if (socket.connected) {
+      return socket;
+    }
 
+    return new Promise((resolve, reject) => {
       let timer = null;
 
       const onConnect = () => {
@@ -479,9 +578,17 @@ const OnlineClient = (() => {
   /**
    * Reconnect to an existing room using session token, room code, and player ID.
    */
-  function reconnectSession(token, targetRoomCode = null, targetPlayerId = null) {
+  async function reconnectSession(token, targetRoomCode = null, targetPlayerId = null) {
     if (_isReconnecting) return;
-    const socket = _ensureSocket();
+    let socket = _socket;
+    if (!socket) {
+      try {
+        socket = await _ensureSocketAsync(3000);
+      } catch (err) {
+        console.warn('[OnlineClient] Cannot reconnect session without Socket.IO:', err);
+        return;
+      }
+    }
     if (!socket || !token) return;
 
     _isReconnecting = true;
@@ -612,6 +719,7 @@ const OnlineClient = (() => {
    * Disconnect completely.
    */
   function disconnect() {
+    _initPromise = null;
     leaveRoom('left', () => {
       if (_socket) {
         _socket.disconnect();
@@ -636,5 +744,7 @@ const OnlineClient = (() => {
     leaveRoom,
     reconnectSession,
     disconnect,
+    _waitForSocketIO,
+    _ensureSocketAsync,
   };
 })();
