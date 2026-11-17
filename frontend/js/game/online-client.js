@@ -11,6 +11,7 @@ const OnlineClient = (() => {
   let _playerName     = null;
   let _isHost         = false;
   let _reconnectToken = null;
+  let _isReconnecting = false;
 
   function isConnected() {
     return !!_socket && _socket.connected;
@@ -76,10 +77,15 @@ const OnlineClient = (() => {
         TableUI.updatePlayerStatus(_playerId || 'human', 'connected');
       }
 
-      // Check if we have an active reconnection token to restore session
-      const savedToken = _reconnectToken || sessionStorage.getItem('kz_reconnect_token');
-      if (savedToken) {
-        reconnectSession(savedToken);
+      // Check if we have an active reconnection session to restore
+      const activeSession = (typeof Storage !== 'undefined' && Storage.getActiveSession)
+        ? Storage.getActiveSession()
+        : null;
+
+      if (activeSession && activeSession.token) {
+        reconnectSession(activeSession.token, activeSession.roomCode, activeSession.playerId);
+      } else if (_reconnectToken && _roomCode) {
+        reconnectSession(_reconnectToken, _roomCode, _playerId);
       }
     });
 
@@ -94,6 +100,7 @@ const OnlineClient = (() => {
     _socket.on('connect_error', (err) => {
       console.warn('[OnlineClient] Connection error:', err.message);
       _updateConnectionStatusUI('disconnected', '🔴 Connection failed - retrying…');
+      _isReconnecting = false;
     });
 
     if (_socket.io) {
@@ -125,6 +132,9 @@ const OnlineClient = (() => {
         deckCount:  1,
         playerName: _playerName,
       });
+      if (typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
+        VoiceClient.startVoice(_socket, _roomCode, _playerId, _playerName);
+      }
       showToast('Game started! Distributing cards…', 'info', 2000);
     });
 
@@ -298,9 +308,16 @@ const OnlineClient = (() => {
       _isHost         = true;
       _reconnectToken = res.reconnect_token;
 
-      // Save token in sessionStorage for quick reconnect
-      sessionStorage.setItem('kz_reconnect_token', _reconnectToken);
-      sessionStorage.setItem('kz_room_code', _roomCode);
+      // Save session in persistent Storage for resilient reconnect across app restarts
+      if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
+        Storage.saveActiveSession({
+          roomCode:   _roomCode,
+          playerId:   _playerId,
+          playerName: _playerName,
+          token:      _reconnectToken,
+          isHost:     _isHost,
+        });
+      }
 
       // Successfully created: close lobby modal and show waiting room
       MenuUI.hideModal('modal-online-lobby');
@@ -326,12 +343,26 @@ const OnlineClient = (() => {
     }
 
     _playerName = playerName;
+    const cleanRoomCode = (roomCode || '').trim().toUpperCase();
+
+    // Only supply reconnectToken if there is an active session specifically for THIS room
+    let tokenToSend = null;
+    if (typeof Storage !== 'undefined' && Storage.getActiveSession) {
+      const activeSession = Storage.getActiveSession();
+      if (activeSession && activeSession.roomCode === cleanRoomCode) {
+        tokenToSend = activeSession.token;
+      }
+    }
 
     socket.emit('join_room', {
       playerName,
-      roomCode,
+      roomCode: cleanRoomCode,
+      reconnectToken: tokenToSend,
     }, (res) => {
       if (!res || !res.success) {
+        if (tokenToSend && typeof Storage !== 'undefined' && Storage.clearActiveSession) {
+          Storage.clearActiveSession();
+        }
         const msg = res ? res.message : 'Failed to join room';
         showToast(msg, 'error', 3500);
         if (typeof callback === 'function') callback(res || { success: false, message: msg });
@@ -340,16 +371,42 @@ const OnlineClient = (() => {
 
       _roomCode       = res.room_code;
       _playerId       = res.player_id;
+      _playerName     = res.player_name || playerName;
       _isHost         = res.is_host;
       _reconnectToken = res.reconnect_token;
 
-      sessionStorage.setItem('kz_reconnect_token', _reconnectToken);
-      sessionStorage.setItem('kz_room_code', _roomCode);
+      if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
+        Storage.saveActiveSession({
+          roomCode:   _roomCode,
+          playerId:   _playerId,
+          playerName: _playerName,
+          token:      _reconnectToken,
+          isHost:     _isHost,
+        });
+      }
 
-      // Successfully joined: close lobby modal and show waiting room
-      MenuUI.hideModal('modal-online-lobby');
-      MenuUI.showWaitingRoom(res.room, _playerId);
-      showToast(`Joined room ${res.room_code}!`, 'success', 2500);
+      if (res.room_status === 'playing') {
+        MenuUI.hideModal('modal-online-lobby');
+        Screens.go('screen-game');
+        if (typeof App !== 'undefined' && App.activateGameBackGuard) {
+          App.activateGameBackGuard();
+        }
+        TableUI.init({
+          roomCode:   _roomCode,
+          deckCount:  res.room ? res.room.deck_count : 1,
+          playerName: _playerName,
+          isReconnect: true,
+        });
+        if (typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
+          VoiceClient.startVoice(_socket, _roomCode, _playerId, _playerName);
+        }
+        showToast(`Re-joined room ${res.room_code}!`, 'success', 2500);
+      } else {
+        // Successfully joined waiting room
+        MenuUI.hideModal('modal-online-lobby');
+        MenuUI.showWaitingRoom(res.room, _playerId);
+        showToast(`Joined room ${res.room_code}!`, 'success', 2500);
+      }
 
       if (typeof callback === 'function') callback(res);
     });
@@ -420,13 +477,25 @@ const OnlineClient = (() => {
   }
 
   /**
-   * Reconnect to an existing room using session token.
+   * Reconnect to an existing room using session token, room code, and player ID.
    */
-  function reconnectSession(token) {
+  function reconnectSession(token, targetRoomCode = null, targetPlayerId = null) {
+    if (_isReconnecting) return;
     const socket = _ensureSocket();
     if (!socket || !token) return;
 
-    socket.emit('reconnect_session', { reconnectToken: token }, (res) => {
+    _isReconnecting = true;
+
+    const payload = { reconnectToken: token };
+    if (targetRoomCode) {
+      payload.roomCode = targetRoomCode;
+    }
+    if (targetPlayerId) {
+      payload.playerId = targetPlayerId;
+    }
+
+    socket.emit('reconnect_session', payload, (res) => {
+      _isReconnecting = false;
       if (res && res.success) {
         _roomCode       = res.room_code;
         _playerId       = res.player_id;
@@ -434,8 +503,15 @@ const OnlineClient = (() => {
         _isHost         = res.is_host;
         _reconnectToken = token;
 
-        sessionStorage.setItem('kz_reconnect_token', token);
-        sessionStorage.setItem('kz_room_code', _roomCode);
+        if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
+          Storage.saveActiveSession({
+            roomCode:   _roomCode,
+            playerId:   _playerId,
+            playerName: _playerName,
+            token:      token,
+            isHost:     _isHost,
+          });
+        }
 
         console.log('[OnlineClient] Successfully reconnected to room', _roomCode);
 
@@ -450,13 +526,19 @@ const OnlineClient = (() => {
             roomCode:   _roomCode,
             deckCount:  res.room ? res.room.deck_count : 1,
             playerName: _playerName,
+            isReconnect: true,
           });
+          if (typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
+            VoiceClient.startVoice(_socket, _roomCode, _playerId, _playerName);
+          }
         }
         showToast(`Reconnected to room ${_roomCode}`, 'success', 3000);
       } else {
-        sessionStorage.removeItem('kz_reconnect_token');
-        sessionStorage.removeItem('kz_room_code');
+        if (typeof Storage !== 'undefined' && Storage.clearActiveSession) {
+          Storage.clearActiveSession();
+        }
         _reconnectToken = null;
+        Screens.go('screen-menu');
       }
     });
   }
@@ -500,6 +582,9 @@ const OnlineClient = (() => {
    * Leave the waiting room or game.
    */
   function leaveRoom(reason = 'left', onComplete) {
+    if (typeof VoiceClient !== 'undefined' && VoiceClient.leaveVoice) {
+      VoiceClient.leaveVoice();
+    }
     if (typeof MenuUI !== 'undefined' && MenuUI.clearLobbyChat) {
       MenuUI.clearLobbyChat();
     }
@@ -518,8 +603,9 @@ const OnlineClient = (() => {
     _playerId = null;
     _isHost   = false;
     _reconnectToken = null;
-    sessionStorage.removeItem('kz_reconnect_token');
-    sessionStorage.removeItem('kz_room_code');
+    if (typeof Storage !== 'undefined' && Storage.clearActiveSession) {
+      Storage.clearActiveSession();
+    }
   }
 
   /**

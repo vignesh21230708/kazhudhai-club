@@ -3,7 +3,7 @@
  * Caches core frontend shell assets for offline loading and ensures deployed
  * frontend updates reach installed Android PWA / TWA users safely.
  */
-const CACHE_NAME = 'kazhudhai-club-v2';
+const CACHE_NAME = 'kazhudhai-club-v3';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
@@ -24,6 +24,7 @@ const ASSETS_TO_CACHE = [
   '/js/lib/socket.io.min.js',
   '/js/game/game-client.js',
   '/js/game/offline-client.js',
+  '/js/game/voice-client.js',
   '/js/game/online-client.js',
   '/assets/images/icon-192.svg',
   '/assets/images/icon-512.svg',

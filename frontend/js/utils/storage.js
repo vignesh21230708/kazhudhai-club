@@ -56,6 +56,48 @@ const Storage = (() => {
   function getLastDifficulty()   { return get('lastDifficulty',   DEFAULTS.lastDifficulty); }
   function saveLastDifficulty(d) { set('lastDifficulty', d); }
 
+  const SESSION_KEY = 'active_session';
+
+  /**
+   * Save active multiplayer room session for seamless reconnection across
+   * page reloads, browser tab restarts, and Android TWA app restarts.
+   */
+  function saveActiveSession({ roomCode, playerId, playerName, token, isHost }) {
+    if (!roomCode || !token) return;
+    set(SESSION_KEY, {
+      roomCode:   String(roomCode).trim().toUpperCase(),
+      playerId:   String(playerId || ''),
+      playerName: String(playerName || ''),
+      token:      String(token).trim(),
+      isHost:     Boolean(isHost),
+      savedAt:    Date.now(),
+    });
+  }
+
+  /**
+   * Retrieve active multiplayer session. Returns null if missing or invalid.
+   */
+  function getActiveSession() {
+    const session = get(SESSION_KEY, null);
+    if (!session || typeof session !== 'object') return null;
+    if (!session.roomCode || !session.token) {
+      clearActiveSession();
+      return null;
+    }
+    return session;
+  }
+
+  /**
+   * Clear active multiplayer session from both localStorage and legacy sessionStorage.
+   */
+  function clearActiveSession() {
+    remove(SESSION_KEY);
+    try {
+      sessionStorage.removeItem('kz_reconnect_token');
+      sessionStorage.removeItem('kz_room_code');
+    } catch {}
+  }
+
   return {
     get, set, remove,
     getSettings, saveSettings,
@@ -63,5 +105,6 @@ const Storage = (() => {
     getLastPlayerCount, saveLastPlayerCount,
     getLastDeckCount, saveLastDeckCount,
     getLastDifficulty, saveLastDifficulty,
+    saveActiveSession, getActiveSession, clearActiveSession,
   };
 })();

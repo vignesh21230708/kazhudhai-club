@@ -6,6 +6,7 @@ authoritative rule execution, zero-leak state delivery,
 instant leave/disconnect notifications, connection status tracking,
 and real-time game activity history synchronization.
 """
+import os
 from flask import request
 from flask_socketio import emit, join_room, leave_room
 from game_engine.room_manager import room_manager
@@ -57,6 +58,7 @@ def register_socket_events(socketio):
             if room.status == 'waiting':
                 emit('room_updated', room.to_lobby_summary(), room=room.code)
             elif room.status == 'playing':
+                emit('voice_peer_left', {'peerId': player.id}, room=room.code)
                 _broadcast_personalized_state(room)
 
     @socketio.on('client_connection_lost')
@@ -131,13 +133,15 @@ def register_socket_events(socketio):
     @socketio.on('join_room')
     def handle_join_room(data):
         try:
-            player_name = (data.get('playerName') or 'Player').strip()
-            room_code   = (data.get('roomCode') or '').strip().upper()
+            player_name     = (data.get('playerName') or 'Player').strip()
+            room_code       = (data.get('roomCode') or '').strip().upper()
+            reconnect_token = data.get('reconnectToken')
 
             room, player = room_manager.join_room(
                 room_code=room_code,
                 player_name=player_name,
                 sid=request.sid,
+                reconnect_token=reconnect_token,
             )
             join_room(room.code)
 
@@ -146,9 +150,23 @@ def register_socket_events(socketio):
             # Log join activity
             act = room.add_activity('join', f"{player.name} joined the room.", player_name=player.name, icon='🟢')
 
-            # Broadcast updated lobby to all players in the room
-            emit('room_updated', room.to_lobby_summary(), room=room.code)
-            emit('activity_logged', act, room=room.code)
+            if room.status == 'waiting':
+                # Broadcast updated lobby to all players in the room
+                emit('room_updated', room.to_lobby_summary(), room=room.code)
+                emit('activity_logged', act, room=room.code)
+            elif room.status == 'playing' and room.game_state:
+                # Reconnected to playing match via join_room
+                emit('player_status_change', {
+                    'player_id': player.id,
+                    'name':      player.name,
+                    'connected': True,
+                    'status':    'connected',
+                }, room=room.code)
+                emit('activity_logged', act, room=room.code)
+                personalized_state = room.game_state.get_state_for_player(player.id)
+                personalized_state['activity_log'] = room.activity_log[::-1]
+                emit('game_state', personalized_state, to=request.sid)
+                _broadcast_personalized_state(room)
 
             return {
                 'success':         True,
@@ -157,6 +175,7 @@ def register_socket_events(socketio):
                 'player_name':     player.name,
                 'is_host':         player.is_host,
                 'reconnect_token': player.reconnect_token,
+                'room_status':     room.status,
                 'room':            room.to_lobby_summary(),
             }
         except Exception as e:
@@ -199,6 +218,7 @@ def register_socket_events(socketio):
                 }, room=room.code)
 
                 emit('activity_logged', act, room=room.code)
+                emit('voice_peer_left', {'peerId': player.id}, room=room.code)
 
             updated_room = room_manager.leave_room(room_code, player_id, reason=reason)
             if updated_room:
@@ -210,6 +230,68 @@ def register_socket_events(socketio):
             return {'success': True}
         except Exception as e:
             return {'success': False, 'message': str(e)}
+
+    def _execute_turn_timeout(room_code: str, expected_sequence: int):
+        room = room_manager.get_room(room_code)
+        if not room:
+            return
+
+        with room.play_lock:
+            if room.status != 'playing' or not room.game_state:
+                return
+            if room.turn_sequence != expected_sequence:
+                return
+
+            current_player = room.game_state.current_player
+            if not current_player:
+                return
+
+            try:
+                res = room.game_state.auto_play_current_turn()
+                card = res['action']['card']
+                suit_sym = SUIT_SYMBOLS.get(card['suit'], card['suit'])
+                card_label = f"{card['rank']}{suit_sym}"
+                p_name = res['action']['player_name']
+
+                # Activity log
+                if res['action']['is_attack']:
+                    act = room.add_activity('attack', f"⏰ Turn timeout: ⚔️ Attack by {p_name} with {card_label}!", player_name=p_name, icon='⚔️')
+                else:
+                    act = room.add_activity('play', f"⏰ Turn timeout: {p_name} auto-played {card_label}.", player_name=p_name, icon='⏳')
+
+                # Broadcast card played to all players in the room
+                socketio.emit('card_played', res['action'], room=room.code)
+                socketio.emit('activity_logged', act, room=room.code)
+
+                # Round completion handling
+                if res['round_completed']:
+                    round_res = res['last_round_result']
+                    socketio.emit('round_resolved', round_res, room=room.code)
+                    if round_res and round_res.get('eliminated_players'):
+                        for safe_name in round_res['eliminated_players']:
+                            act_safe = room.add_activity('safe', f"🎉 {safe_name} is Safe!", player_name=safe_name, icon='🎉')
+                            socketio.emit('activity_logged', act_safe, room=room.code)
+
+                # Game finished check
+                if room.game_state.status == 'finished':
+                    room.status = 'finished'
+                    room.cancel_turn_timer()
+                    kazhudhai = next((r for r in room.game_state.rankings if r.get('is_kazhudhai')), None)
+                    k_name = kazhudhai['name'] if kazhudhai else 'Unknown'
+                    act_end = room.add_activity('game_over', f"👑 Game ended. {k_name} is KAZHUDHAI!", icon='👑')
+                    socketio.emit('activity_logged', act_end, room=room.code)
+                    socketio.emit('game_over', {
+                        'rankings':       room.game_state.rankings,
+                        'kazhudhai_name': k_name,
+                    }, room=room.code)
+                else:
+                    # Restart 30s turn timer for next turn
+                    room.start_turn_timer(_execute_turn_timeout, timeout_seconds=30.0)
+
+                _broadcast_personalized_state(room)
+
+            except Exception as e:
+                print(f"[TurnTimer] Error during auto-play timeout: {e}")
 
     @socketio.on('start_game')
     def handle_start_game(data):
@@ -229,6 +311,9 @@ def register_socket_events(socketio):
             # Notify room game has started
             emit('game_started', {'room_code': room.code}, room=room.code)
             emit('activity_logged', act, room=room.code)
+
+            # Start authoritative 30s turn timer
+            room.start_turn_timer(_execute_turn_timeout, timeout_seconds=30.0)
 
             # Send personalized states with strict card isolation
             _broadcast_personalized_state(room)
@@ -250,6 +335,9 @@ def register_socket_events(socketio):
             emit('game_started', {'room_code': room.code}, room=room.code)
             emit('activity_logged', act, room=room.code)
 
+            # Start authoritative 30s turn timer
+            room.start_turn_timer(_execute_turn_timeout, timeout_seconds=30.0)
+
             _broadcast_personalized_state(room)
 
             return {'success': True}
@@ -258,6 +346,8 @@ def register_socket_events(socketio):
 
     @socketio.on('play_card')
     def handle_play_card(data):
+        room = None
+        player_id = None
         try:
             room_code = (data.get('roomCode') or '').strip().upper()
             player_id = data.get('playerId')
@@ -269,50 +359,55 @@ def register_socket_events(socketio):
             if room.status != 'playing' or not room.game_state:
                 return {'success': False, 'message': 'Game is not in progress'}
 
-            # Authoritative game play
-            res = room.game_state.play_card(player_id, card_id)
-            card = res['action']['card']
-            suit_sym = SUIT_SYMBOLS.get(card['suit'], card['suit'])
-            card_label = f"{card['rank']}{suit_sym}"
-            p_name = res['action']['player_name']
+            with room.play_lock:
+                # Authoritative game play
+                res = room.game_state.play_card(player_id, card_id)
+                card = res['action']['card']
+                suit_sym = SUIT_SYMBOLS.get(card['suit'], card['suit'])
+                card_label = f"{card['rank']}{suit_sym}"
+                p_name = res['action']['player_name']
 
-            # Record play in activity history
-            if res['action']['is_attack']:
-                act = room.add_activity('attack', f"⚔️ Attack triggered by {p_name} with {card_label}!", player_name=p_name, icon='⚔️')
-            else:
-                act = room.add_activity('play', f"{p_name} played {card_label}.", player_name=p_name, icon='🃏')
+                # Record play in activity history
+                if res['action']['is_attack']:
+                    act = room.add_activity('attack', f"⚔️ Attack triggered by {p_name} with {card_label}!", player_name=p_name, icon='⚔️')
+                else:
+                    act = room.add_activity('play', f"{p_name} played {card_label}.", player_name=p_name, icon='🃏')
 
-            # Broadcast the action card played to all table participants
-            emit('card_played', res['action'], room=room.code)
-            emit('activity_logged', act, room=room.code)
+                # Broadcast the action card played to all table participants
+                emit('card_played', res['action'], room=room.code)
+                emit('activity_logged', act, room=room.code)
 
-            # If round resolved, broadcast round completion details
-            if res['round_completed']:
-                round_res = res['last_round_result']
-                emit('round_resolved', round_res, room=room.code)
+                # If round resolved, broadcast round completion details
+                if res['round_completed']:
+                    round_res = res['last_round_result']
+                    emit('round_resolved', round_res, room=room.code)
 
-                # Record eliminated safe players
-                if round_res and round_res.get('eliminated_players'):
-                    for safe_name in round_res['eliminated_players']:
-                        act_safe = room.add_activity('safe', f"🎉 {safe_name} is Safe!", player_name=safe_name, icon='🎉')
-                        emit('activity_logged', act_safe, room=room.code)
+                    # Record eliminated safe players
+                    if round_res and round_res.get('eliminated_players'):
+                        for safe_name in round_res['eliminated_players']:
+                            act_safe = room.add_activity('safe', f"🎉 {safe_name} is Safe!", player_name=safe_name, icon='🎉')
+                            emit('activity_logged', act_safe, room=room.code)
 
-            # Sync personalized state to all players
-            _broadcast_personalized_state(room)
+                # If game is finished, broadcast game over
+                if room.game_state.status == 'finished':
+                    room.status = 'finished'
+                    room.cancel_turn_timer()
+                    kazhudhai = next((r for r in room.game_state.rankings if r.get('is_kazhudhai')), None)
+                    k_name = kazhudhai['name'] if kazhudhai else 'Unknown'
 
-            # If game is finished, broadcast game over
-            if room.game_state.status == 'finished':
-                room.status = 'finished'
-                kazhudhai = next((r for r in room.game_state.rankings if r.get('is_kazhudhai')), None)
-                k_name = kazhudhai['name'] if kazhudhai else 'Unknown'
+                    act_end = room.add_activity('game_over', f"👑 Game ended. {k_name} is KAZHUDHAI!", icon='👑')
+                    emit('activity_logged', act_end, room=room.code)
 
-                act_end = room.add_activity('game_over', f"👑 Game ended. {k_name} is KAZHUDHAI!", icon='👑')
-                emit('activity_logged', act_end, room=room.code)
+                    emit('game_over', {
+                        'rankings':       room.game_state.rankings,
+                        'kazhudhai_name': k_name,
+                    }, room=room.code)
+                else:
+                    # Advance 30s turn timer for next turn
+                    room.start_turn_timer(_execute_turn_timeout, timeout_seconds=30.0)
 
-                emit('game_over', {
-                    'rankings':       room.game_state.rankings,
-                    'kazhudhai_name': k_name,
-                }, room=room.code)
+                # Sync personalized state to all players
+                _broadcast_personalized_state(room)
 
             return {'success': True}
         except Exception as e:
@@ -410,12 +505,21 @@ def register_socket_events(socketio):
     def handle_reconnect(data):
         try:
             token = data.get('reconnectToken')
+            room_code = data.get('roomCode')
+            player_id = data.get('playerId')
             if not token:
                 return {'success': False, 'message': 'Token missing'}
 
-            room, player = room_manager.reconnect_player(token, request.sid)
+            room, player = room_manager.reconnect_player(
+                token,
+                request.sid,
+                room_code=room_code,
+                player_id=player_id
+            )
             if not room or not player:
                 return {'success': False, 'message': 'Invalid session or room closed'}
+
+            print(f"[SocketIO] Reconnected: code={room.code}, player={player.name}, sid={request.sid}")
 
             player.departure_notified = False
             join_room(room.code)
@@ -449,6 +553,7 @@ def register_socket_events(socketio):
                 personalized_state = room.game_state.get_state_for_player(player.id)
                 personalized_state['activity_log'] = room.activity_log[::-1]
                 emit('game_state', personalized_state, to=request.sid)
+                _broadcast_personalized_state(room)
 
             return {
                 'success':     True,
@@ -461,6 +566,82 @@ def register_socket_events(socketio):
             }
         except Exception as e:
             return {'success': False, 'message': str(e)}
+
+    # ── Match-Only WebRTC Voice Chat Signaling ──
+
+    @socketio.on('get_ice_servers')
+    def handle_get_ice_servers():
+        ice_servers = [
+            {'urls': [
+                'stun:stun.l.google.com:19302',
+                'stun:stun1.l.google.com:19302',
+            ]}
+        ]
+        turn_url = os.environ.get('TURN_SERVER_URL')
+        if turn_url:
+            turn_cfg = {'urls': turn_url}
+            turn_user = os.environ.get('TURN_USERNAME')
+            turn_cred = os.environ.get('TURN_CREDENTIAL')
+            if turn_user:
+                turn_cfg['username'] = turn_user
+            if turn_cred:
+                turn_cfg['credential'] = turn_cred
+            ice_servers.append(turn_cfg)
+
+        return {'success': True, 'iceServers': ice_servers}
+
+    @socketio.on('voice_join')
+    def handle_voice_join(data):
+        room_code = (data.get('roomCode') or '').strip().upper()
+        player_id = data.get('playerId')
+        room = room_manager.get_room(room_code)
+        if not room or room.status != 'playing':
+            return {'success': False, 'message': 'Voice chat is only available during an active match'}
+        if player_id not in room.players:
+            return {'success': False, 'message': 'Player not in room'}
+
+        player = room.players[player_id]
+        emit('voice_peer_joined', {
+            'peerId': player.id,
+            'name':   player.name,
+        }, room=room.code, include_self=False)
+
+        active_peers = [
+            {'peerId': p.id, 'name': p.name}
+            for p in room.players.values()
+            if p.id != player_id and p.connected and p.status == 'connected'
+        ]
+        return {'success': True, 'peers': active_peers}
+
+    @socketio.on('voice_signal')
+    def handle_voice_signal(data):
+        room_code      = (data.get('roomCode') or '').strip().upper()
+        target_peer_id = data.get('targetPeerId')
+        signal         = data.get('signal')
+        from_peer_id   = data.get('playerId')
+
+        room = room_manager.get_room(room_code)
+        if not room or room.status != 'playing':
+            return {'success': False, 'message': 'Voice chat available only during match'}
+
+        target_player = room.players.get(target_peer_id)
+        if not target_player or not target_player.sid:
+            return {'success': False, 'message': 'Target peer not connected'}
+
+        emit('voice_signal', {
+            'fromPeerId': from_peer_id,
+            'signal':     signal,
+        }, to=target_player.sid)
+        return {'success': True}
+
+    @socketio.on('voice_leave')
+    def handle_voice_leave(data):
+        room_code = (data.get('roomCode') or '').strip().upper()
+        player_id = data.get('playerId')
+        room = room_manager.get_room(room_code)
+        if room:
+            emit('voice_peer_left', {'peerId': player_id}, room=room.code, include_self=False)
+        return {'success': True}
 
     def _broadcast_personalized_state(room):
         """
@@ -478,4 +659,4 @@ def register_socket_events(socketio):
             if p.sid and p.connected:
                 p_state = room.game_state.get_state_for_player(p.id)
                 p_state['activity_log'] = activity_history
-                emit('game_state', p_state, to=p.sid)
+                socketio.emit('game_state', p_state, to=p.sid)

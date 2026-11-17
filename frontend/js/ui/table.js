@@ -36,11 +36,14 @@ const TableUI = (() => {
     DOM.confirmExit    = document.getElementById('confirm-exit');
     DOM.btnEmoji       = document.getElementById('btn-table-emoji');
     DOM.emojiPanel     = document.getElementById('emoji-picker-panel');
+    DOM.turnTimerBadge = document.getElementById('turn-timer-badge');
+    DOM.turnCountdownVal = document.getElementById('turn-countdown-val');
   }
 
   let _eventsBound = false;
   let _isPlayInFlight = false;
   let _isFirstDeal = true;
+  let _turnTimerInterval = null;
   let _selectedCardId = null;
   let _myHand = [];     // Array of card objects { id, rank, suit }
   let _legalSuit = null; // null = any card OK; 'S'/'H'/etc = must follow suit
@@ -132,25 +135,30 @@ const TableUI = (() => {
   function init(gameConfig) {
     _cache();
     _selectedCardId = null;
-    _myHand = [];
-    _legalSuit = null;
-    _isMyTurn = false;
+    if (!gameConfig || !gameConfig.isReconnect) {
+      _myHand = [];
+      _legalSuit = null;
+      _isMyTurn = false;
+      _isFirstDeal = true;
+    }
     _isPlayInFlight = false;
-    _isFirstDeal = true;
     closeInGameMenu();
     hideExitConfirm();
+    _stopTurnTimer();
 
-    DOM.hudRoomCode.textContent  = gameConfig.roomCode  || 'OFFLINE';
-    DOM.hudDeckCount.textContent = gameConfig.deckCount || '?';
-    DOM.selfName.textContent     = gameConfig.playerName || 'You';
+    DOM.hudRoomCode.textContent  = (gameConfig && gameConfig.roomCode)  || 'OFFLINE';
+    DOM.hudDeckCount.textContent = (gameConfig && gameConfig.deckCount) || '?';
+    DOM.selfName.textContent     = (gameConfig && gameConfig.playerName) || 'You';
 
-    DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
-    DOM.attackBanner.classList.add('hidden');
-    if (DOM.selfAvatar) {
-      DOM.selfAvatar.classList.remove('active-turn');
-      _syncSafeBadge(DOM.selfAvatar, false);
+    if (!gameConfig || !gameConfig.isReconnect) {
+      DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
+      DOM.attackBanner.classList.add('hidden');
+      if (DOM.selfAvatar) {
+        DOM.selfAvatar.classList.remove('active-turn');
+        _syncSafeBadge(DOM.selfAvatar, false);
+      }
+      updateCommonPile(0);
     }
-    updateCommonPile(0);
 
     _bindTableEvents();
   }
@@ -913,7 +921,7 @@ const TableUI = (() => {
       return;
     }
 
-    const currentCardEls = DOM.playedCardsRow.querySelectorAll('.card');
+    const currentCardEls = DOM.playedCardsRow.querySelectorAll('.playing-card, .card');
     let isMatch = (currentCardEls.length === playedCards.length);
     if (isMatch) {
       for (let i = 0; i < playedCards.length; i++) {
@@ -1022,6 +1030,70 @@ const TableUI = (() => {
     Animations.flash(DOM.selfAvatar, color || 'rgba(201,168,76,0.6)');
   }
 
+  // ── Turn countdown timer (30s) ──
+  function _stopTurnTimer() {
+    if (_turnTimerInterval) {
+      clearInterval(_turnTimerInterval);
+      _turnTimerInterval = null;
+    }
+    if (DOM.turnTimerBadge) {
+      DOM.turnTimerBadge.classList.add('hidden');
+      DOM.turnTimerBadge.classList.remove('timer-warning', 'timer-critical');
+    }
+  }
+
+  function updateTurnTimer(turnDeadline) {
+    if (!DOM.turnTimerBadge) _cache();
+    if (!turnDeadline || typeof turnDeadline !== 'number') {
+      _stopTurnTimer();
+      return;
+    }
+
+    if (_turnTimerInterval) {
+      clearInterval(_turnTimerInterval);
+      _turnTimerInterval = null;
+    }
+
+    function tick() {
+      const nowSec = Date.now() / 1000;
+      const remaining = Math.max(0, Math.ceil(turnDeadline - nowSec));
+
+      if (DOM.turnCountdownVal) {
+        DOM.turnCountdownVal.textContent = remaining;
+      }
+      if (DOM.turnTimerBadge) {
+        DOM.turnTimerBadge.classList.remove('hidden');
+        DOM.turnTimerBadge.classList.toggle('timer-critical', remaining <= 5);
+        DOM.turnTimerBadge.classList.toggle('timer-warning', remaining > 5 && remaining <= 10);
+      }
+
+      if (remaining <= 0 && _turnTimerInterval) {
+        clearInterval(_turnTimerInterval);
+        _turnTimerInterval = null;
+      }
+    }
+
+    tick();
+    _turnTimerInterval = setInterval(tick, 250);
+  }
+
+  // ── Avatar Speaking Pulse Indicator ──
+  function setPlayerSpeaking(playerId, isSpeaking) {
+    let avatarEl = null;
+    const isSelf = (playerId === 'self' || playerId === 'human' ||
+      (typeof OnlineClient !== 'undefined' && typeof OnlineClient.getPlayerId === 'function' && playerId === OnlineClient.getPlayerId()));
+
+    if (isSelf) {
+      avatarEl = DOM.selfAvatar || document.getElementById('self-avatar');
+    } else {
+      avatarEl = document.getElementById(`opp-avatar-${playerId}`);
+    }
+
+    if (avatarEl) {
+      avatarEl.classList.toggle('is-speaking', !!isSpeaking);
+    }
+  }
+
   return {
     init,
     renderPlayers,
@@ -1037,6 +1109,8 @@ const TableUI = (() => {
     updateCommonPile,
     setStatus,
     setTurn,
+    updateTurnTimer,
+    setPlayerSpeaking,
     updateSelfAttackPile,
     flashOpponentAvatar,
     flashSelfAvatar,

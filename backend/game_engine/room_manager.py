@@ -7,11 +7,16 @@ and zero-leak state serialisation.
 """
 from __future__ import annotations
 import random
+import secrets
 import string
+import threading
+import time
 import uuid
 from datetime import datetime
 from dataclasses import dataclass, field
 from game_engine.game_state import GameState
+
+GRACE_PERIOD_SECONDS = 120.0
 
 
 @dataclass
@@ -23,7 +28,8 @@ class RoomPlayer:
     connected: bool = True
     status: str = 'connected'  # 'connected', 'reconnecting', 'disconnected', 'left'
     departure_reason: str | None = None
-    reconnect_token: str = field(default_factory=lambda: uuid.uuid4().hex)
+    reconnect_token: str = field(default_factory=lambda: secrets.token_hex(24))
+    disconnected_at: float | None = None
 
     def to_summary(self) -> dict:
         return {
@@ -48,6 +54,41 @@ class Room:
         self.game_state: GameState | None = None
         self.activity_log: list[dict] = []  # Chronological game activity entries
         self.chat_messages: list[dict] = []  # Lobby-only real-time chat messages
+        self.play_lock = threading.Lock()    # Atomic lock for turn moves and timeout handling
+        self.turn_sequence: int = 0          # Monotonically increasing counter per turn
+        self.turn_timer: threading.Timer | None = None
+        self.turn_deadline: float | None = None
+
+    def cancel_turn_timer(self):
+        """Cancel any pending turn timeout timer."""
+        if self.turn_timer:
+            try:
+                self.turn_timer.cancel()
+            except Exception:
+                pass
+            self.turn_timer = None
+
+    def start_turn_timer(self, timeout_callback, timeout_seconds: float = 30.0):
+        """
+        Start the server-authoritative 30s turn timer.
+        Increments turn_sequence to invalidate prior timers and avoid races.
+        """
+        self.cancel_turn_timer()
+        self.timeout_callback = timeout_callback
+        self.turn_sequence += 1
+        expected_seq = self.turn_sequence
+        deadline = time.time() + timeout_seconds
+        self.turn_deadline = deadline
+        if self.game_state:
+            self.game_state.turn_deadline = deadline
+            self.game_state.turn_duration = timeout_seconds
+
+        def _on_timeout():
+            timeout_callback(self.code, expected_seq)
+
+        self.turn_timer = threading.Timer(timeout_seconds, _on_timeout)
+        self.turn_timer.daemon = True
+        self.turn_timer.start()
 
     @property
     def player_count(self) -> int:
@@ -135,6 +176,7 @@ class Room:
             player.connected = False
             player.status = reason
             player.departure_reason = reason
+            player.disconnected_at = time.time()
             if self.game_state:
                 p_game = self.game_state._get_player(player_id)
                 if p_game:
@@ -194,11 +236,40 @@ class RoomManager:
         self.rooms[code] = room
         return room, host
 
-    def join_room(self, room_code: str, player_name: str, sid: str | None = None) -> tuple[Room, RoomPlayer]:
+    def join_room(self, room_code: str, player_name: str, sid: str | None = None,
+                  reconnect_token: str | None = None) -> tuple[Room, RoomPlayer]:
         code = room_code.strip().upper()
         if code not in self.rooms:
             raise ValueError(f"Room '{code}' does not exist")
         room = self.rooms[code]
+
+        # Feature 2 & Security: Reconnect to original player slot ONLY if a valid,
+        # securely generated reconnect_token matches an existing player in this room
+        # AND is within the 2-minute grace period.
+        # NEVER allow reclaiming an existing player slot using only the same player name.
+        if reconnect_token and isinstance(reconnect_token, str) and reconnect_token.strip():
+            clean_token = reconnect_token.strip()
+            for p in room.players.values():
+                if p.reconnect_token == clean_token:
+                    now = time.time()
+                    if p.disconnected_at is not None and (now - p.disconnected_at) > GRACE_PERIOD_SECONDS:
+                        raise ValueError("Reconnection grace period (2 minutes) has expired")
+                    p.sid = sid
+                    p.connected = True
+                    p.status = 'connected'
+                    p.departure_reason = None
+                    p.disconnected_at = None
+                    if room.game_state:
+                        p_game = room.game_state._get_player(p.id)
+                        if p_game:
+                            p_game.connection_status = 'connected'
+                    return room, p
+
+        # If token is missing, invalid, or does not match:
+        # If match is already playing, reject immediately (cannot take over any slot without valid token)
+        if room.status != 'waiting':
+            raise ValueError(f"Game in room '{code}' is already in progress")
+
         player = room.add_player(name=player_name, sid=sid, is_host=False)
         return room, player
 
@@ -214,14 +285,39 @@ class RoomManager:
                 return room, player
         return None, None
 
-    def reconnect_player(self, reconnect_token: str, new_sid: str) -> tuple[Room | None, RoomPlayer | None]:
-        for room in self.rooms.values():
-            player = room.get_player_by_token(reconnect_token)
+    def reconnect_player(self, reconnect_token: str, new_sid: str,
+                         room_code: str | None = None,
+                         player_id: str | None = None) -> tuple[Room | None, RoomPlayer | None]:
+        if not reconnect_token or not isinstance(reconnect_token, str) or not reconnect_token.strip():
+            return None, None
+        clean_token = reconnect_token.strip()
+        clean_player_id = player_id.strip() if (player_id and isinstance(player_id, str)) else None
+        now = time.time()
+
+        if room_code:
+            target_room = self.get_room(room_code)
+            if not target_room:
+                return None, None
+            candidate_rooms = [target_room]
+        else:
+            candidate_rooms = list(self.rooms.values())
+
+        for room in candidate_rooms:
+            player = room.get_player_by_token(clean_token)
             if player:
+                # If player_id was specified, strictly verify it matches the slot
+                if clean_player_id and player.id != clean_player_id:
+                    return None, None
+
+                # Enforce 2-minute grace period if player was disconnected
+                if player.disconnected_at is not None and (now - player.disconnected_at) > GRACE_PERIOD_SECONDS:
+                    return None, None
+
                 player.sid = new_sid
                 player.connected = True
                 player.status = 'connected'
                 player.departure_reason = None
+                player.disconnected_at = None
                 if room.game_state:
                     p_game = room.game_state._get_player(player.id)
                     if p_game:
@@ -232,20 +328,29 @@ class RoomManager:
     def handle_disconnect(self, sid: str, reason: str = 'disconnected') -> tuple[Room | None, RoomPlayer | None]:
         room, player = self.get_room_by_sid(sid)
         if room and player:
+            # Stale socket disconnect protection:
+            # If the player already reconnected on a newer socket (player.sid != sid),
+            # this old socket disconnect event must NOT override the newer active connection!
+            if player.sid != sid:
+                return None, None
+
             # Only update if not already explicitly marked as 'left'
             if player.status != 'left':
                 player.connected = False
                 player.status = reason
                 player.departure_reason = reason
+                player.disconnected_at = time.time()
+                player.sid = None  # Clear old socket ID so stale events cannot match
+
                 if room.game_state:
                     p_game = room.game_state._get_player(player.id)
                     if p_game:
                         p_game.connection_status = reason
 
-            # If waiting and not in game, and all players disconnected or empty, clean up
+            # If waiting and not in game, only clean up if all players explicitly left
             if room.status == 'waiting':
-                all_disconnected = all(not p.connected for p in room.players.values())
-                if all_disconnected:
+                all_left = all(p.status == 'left' for p in room.players.values())
+                if all_left:
                     self.rooms.pop(room.code, None)
             return room, player
         return None, None
@@ -291,6 +396,7 @@ class RoomManager:
 
         # Clear lobby chat history when match starts (chat is disabled during gameplay)
         room.chat_messages.clear()
+        room.cancel_turn_timer()
 
         room.game_state = game_state
         room.status = 'playing'

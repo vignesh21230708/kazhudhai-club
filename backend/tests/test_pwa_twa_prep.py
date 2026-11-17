@@ -131,7 +131,7 @@ class TestPwaTwaPreparation(unittest.TestCase):
             self.assertIn('javascript', res.content_type)
             sw_code = res.data.decode('utf-8')
 
-        self.assertIn("const CACHE_NAME = 'kazhudhai-club-v2'", sw_code)
+        self.assertIn("const CACHE_NAME = 'kazhudhai-club-v3'", sw_code)
         self.assertIn('/api/', sw_code)
         self.assertIn('/socket.io/', sw_code)
         self.assertIn('/.well-known/', sw_code)

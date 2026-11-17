@@ -6,8 +6,9 @@ player finishes, and KAZHUDHAI identification.
 Security: Never exposes other players' hands in state returned to client.
 """
 from __future__ import annotations
+import random
 import uuid
-from game_engine.deck import build_deck, find_ace_of_spades, sort_hand
+from game_engine.deck import build_deck, find_ace_of_spades, sort_hand, RANK_ORDER
 from game_engine.distributor import distribute
 from game_engine.player import Player
 from game_engine.round_engine import RoundEngine
@@ -46,6 +47,8 @@ class GameState:
         self.rankings: list[dict] = []    # Finished players in rank order
         self.last_round_result: dict | None = None  # Info on most recently resolved round
         self.last_action: dict | None = None        # Info on most recent card play
+        self.turn_deadline: float | None = None     # Authoritative epoch timestamp for current turn
+        self.turn_duration: float = 30.0            # Turn time limit in seconds
 
     # ── Read-only properties ──
 
@@ -369,6 +372,64 @@ class GameState:
             'state':             self._build_state(None),
         }
 
+    # ── Turn Timer & Automatic Play ──
+
+    @staticmethod
+    def select_auto_play_card(player: Player, current_round: RoundEngine | None, round_number: int = 1) -> dict:
+        """
+        Authoritative automatic card selection for turn timer expiration:
+          - If starting new round (or no starting suit):
+            - If round 1 and player holds A♠: play A♠ (Rule 5).
+            - Otherwise: highest rank card overall in hand (random tie-break if tied).
+          - If following an active round (starting suit set):
+            - Priority 1: If player has starting suit cards, select highest rank card of that suit.
+            - Priority 2: If player has no starting suit cards, select highest rank card overall from hand.
+            - Priority 3: If multiple cards tie for highest rank in either case, pick randomly among tied cards.
+        """
+        hand = player.hand
+        if not hand:
+            raise ValueError(f"Player {player.name} has no cards in hand")
+
+        # Round 1 starter holding A♠ must lead with A♠
+        if round_number == 1 and (current_round is None or current_round.starting_suit is None):
+            a_spades = find_ace_of_spades(hand)
+            if a_spades:
+                return a_spades
+
+        # Following an active round
+        if current_round and current_round.starting_suit:
+            starting_suit = current_round.starting_suit
+            suit_cards = [c for c in hand if isinstance(c, dict) and c.get('suit') == starting_suit]
+            if suit_cards:
+                # Priority 1: highest rank of starting suit
+                max_rank = max(RANK_ORDER.get(c.get('rank'), -1) for c in suit_cards)
+                tied = [c for c in suit_cards if RANK_ORDER.get(c.get('rank'), -1) == max_rank]
+                return random.choice(tied)
+            # Priority 2: No starting suit cards (Attack!). Highest rank card overall from hand
+            max_rank = max(RANK_ORDER.get(c.get('rank'), -1) for c in hand if isinstance(c, dict))
+            tied = [c for c in hand if isinstance(c, dict) and RANK_ORDER.get(c.get('rank'), -1) == max_rank]
+            return random.choice(tied)
+
+        # Starting a round (> 1 or round 1 without A♠)
+        max_rank = max(RANK_ORDER.get(c.get('rank'), -1) for c in hand if isinstance(c, dict))
+        tied = [c for c in hand if isinstance(c, dict) and RANK_ORDER.get(c.get('rank'), -1) == max_rank]
+        return random.choice(tied)
+
+    def auto_play_current_turn(self) -> dict:
+        """Execute auto-play for the current turn player when timer expires."""
+        if self.status != self.STATUS_PLAYING:
+            raise ValueError("Game is not in progress")
+        player = self.current_player
+        if player is None:
+            raise ValueError("No active current player")
+        card = self.select_auto_play_card(player, self.current_round, self.round_number)
+        card_id = str(card.get('id'))
+        res = self.play_card(player.id, card_id)
+        res['is_auto_play'] = True
+        if 'action' in res:
+            res['action']['is_auto_play'] = True
+        return res
+
     # ── State Serialisation ──
 
     def _build_state(self, requesting_player_id: str | None) -> dict:
@@ -415,6 +476,8 @@ class GameState:
             'deck_count':        self.num_decks,
             'last_round_result': self.last_round_result,
             'last_action':       self.last_action,
+            'turn_deadline':     self.turn_deadline,
+            'turn_duration':     self.turn_duration,
         }
 
         # Attach requesting player's hand (arranged by suit and descending rank)

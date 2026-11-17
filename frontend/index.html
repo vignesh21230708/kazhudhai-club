@@ -428,6 +428,18 @@
         <span class="hud-value" id="hud-common-count">0 cards</span>
       </div>
       <div class="hud-status" id="hud-status">Waiting to start…</div>
+
+      <!-- Match-Only Voice Chat Controls (Hidden offline, active online) -->
+      <div class="hud-voice-controls hidden" id="hud-voice-controls">
+        <button class="hud-voice-btn voice-mic-btn" id="btn-voice-mic" title="Microphone (Mute/Unmute)" aria-label="Microphone" type="button">
+          <span class="voice-btn-icon" id="voice-mic-icon">🎤</span>
+          <span class="voice-btn-label" id="voice-mic-label">Mic Off</span>
+        </button>
+        <button class="hud-voice-btn voice-speaker-btn" id="btn-voice-speaker" title="Speaker (Deafen/Undeafen)" aria-label="Speaker" type="button">
+          <span class="voice-btn-icon" id="voice-speaker-icon">🔊</span>
+          <span class="voice-btn-label" id="voice-speaker-label">Audio On</span>
+        </button>
+      </div>
     </div>
 
     <!-- Main Game Table -->
@@ -501,6 +513,7 @@
           <!-- ── Turn indicator ring ── -->
           <div class="turn-indicator" id="turn-indicator">
             <span id="turn-text">—</span>
+            <span class="turn-timer-badge hidden" id="turn-timer-badge">⏳ <span id="turn-countdown-val">30</span>s</span>
           </div>
 
         </div>
@@ -627,12 +640,15 @@
   <script src="js/ui/table.js"></script>
   <script src="js/game/game-client.js"></script>
   <script src="js/game/offline-client.js"></script>
+  <script src="js/game/voice-client.js"></script>
   <script src="js/game/online-client.js"></script>
   <script src="js/main.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/service-worker.js').catch(err => console.log('SW registration failed:', err));
+        navigator.serviceWorker.register('/service-worker.js')
+          .then(reg => reg.update())
+          .catch(err => console.log('SW registration failed:', err));
       });
     }
   </script>

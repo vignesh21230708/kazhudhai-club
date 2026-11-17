@@ -319,6 +319,23 @@ const App = (() => {
       _backNavBound = true;
     }
     console.log('[KAZHUDHAI CLUB] Stage 3 Active: Core round gameplay online.');
+
+    // Check saved active session during startup for seamless Android APK / browser reload recovery
+    _checkActiveSessionOnStartup();
+  }
+
+  function _checkActiveSessionOnStartup() {
+    if (typeof Storage === 'undefined' || !Storage.getActiveSession) return;
+    const session = Storage.getActiveSession();
+    if (!session || !session.token || !session.roomCode) return;
+
+    console.log('[App] Persistent active session detected on startup for room:', session.roomCode);
+
+    // Initialize Socket.IO connection only when a valid saved session exists
+    if (typeof OnlineClient !== 'undefined' && OnlineClient.initConnection) {
+      showToast(`Reconnecting to room ${session.roomCode}…`, 'info', 3000);
+      OnlineClient.initConnection();
+    }
   }
 
   // Safe stubs for activity drawer (removed from game UI per user request)
@@ -639,6 +656,11 @@ const App = (() => {
 
     TableUI.setTurn(isMyTurn ? 'Your' : `${currentName}'s`, isMyTurn);
 
+    // Update synchronized turn countdown timer (30s)
+    if (typeof TableUI.updateTurnTimer === 'function') {
+      TableUI.updateTurnTimer(state.turn_deadline, state.turn_duration || 30);
+    }
+
     if (isMyTurn) {
       if (state.legal_suit) {
         TableUI.setStatus(`Your turn! Follow ${CardRenderer.suitSymbol(state.legal_suit)} or Attack!`);
@@ -656,6 +678,13 @@ const App = (() => {
     // When not in mid-resolution pause, strictly show cards for the active round:
     if (!_isRoundPaused && typeof TableUI.syncPlayedCards === 'function') {
       TableUI.syncPlayedCards(state.played_cards || []);
+    }
+
+    // Preserve attack banner if active round has attack
+    if (state.is_attack && state.attacker_name) {
+      TableUI.showAttackBanner(state.attacker_name);
+    } else if (!state.is_attack && !_isRoundPaused) {
+      TableUI.hideAttackBanner();
     }
 
     // Human hand - always pass the authoritative isMyTurn
@@ -676,6 +705,12 @@ const App = (() => {
   function _showResults(state) {
     _clearAiTimeout();
     _clearRoundTimer();
+    if (typeof TableUI !== 'undefined' && TableUI.updateTurnTimer) {
+      TableUI.updateTurnTimer(null);
+    }
+    if (typeof VoiceClient !== 'undefined' && VoiceClient.leaveVoice) {
+      VoiceClient.leaveVoice();
+    }
     if (typeof MenuUI !== 'undefined' && typeof MenuUI.hideModal === 'function') {
       MAIN_MENU_MODALS.forEach(id => MenuUI.hideModal(id, { fromPopState: true }));
     }
@@ -866,6 +901,12 @@ const App = (() => {
     _clearRoundTimer();
     _isRoundPaused = false;
     _pendingNextState = null;
+    if (typeof TableUI !== 'undefined' && TableUI.updateTurnTimer) {
+      TableUI.updateTurnTimer(null);
+    }
+    if (typeof VoiceClient !== 'undefined' && VoiceClient.leaveVoice) {
+      VoiceClient.leaveVoice();
+    }
     if (typeof MenuUI !== 'undefined' && typeof MenuUI.hideModal === 'function') {
       MAIN_MENU_MODALS.forEach(id => MenuUI.hideModal(id, { fromPopState: true }));
     }
