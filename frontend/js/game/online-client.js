@@ -5,14 +5,19 @@
  */
 const OnlineClient = (() => {
 
-  let _socket         = null;
-  let _roomCode       = null;
-  let _playerId       = null;
-  let _playerName     = null;
-  let _isHost         = false;
-  let _reconnectToken = null;
-  let _isReconnecting = false;
-  let _initPromise    = null;
+  let _socket          = null;
+  let _roomCode        = null;
+  let _playerId        = null;
+  let _playerName      = null;
+  let _isHost          = false;
+  let _reconnectToken  = null;
+  let _isReconnecting  = false;
+  let _initPromise     = null;
+  let _isSpectator     = false;
+  let _spectatorId     = null;
+  let _spectatorName   = null;
+  let _matchId         = null;
+  let _postMatchStatus = null;
 
   function isConnected() {
     return !!_socket && _socket.connected;
@@ -23,11 +28,27 @@ const OnlineClient = (() => {
   }
 
   function isHost() {
-    return _isHost;
+    return _isHost && !_isSpectator;
   }
 
   function getPlayerId() {
     return _playerId;
+  }
+
+  function isSpectator() {
+    return _isSpectator;
+  }
+
+  function getSpectatorId() {
+    return _spectatorId;
+  }
+
+  function getCurrentSenderId() {
+    return _isSpectator ? _spectatorId : _playerId;
+  }
+
+  function getPostMatchStatus() {
+    return _postMatchStatus;
   }
 
   /**
@@ -125,15 +146,17 @@ const OnlineClient = (() => {
         TableUI.updatePlayerStatus(_playerId || 'human', 'connected');
       }
 
-      // Check if we have an active reconnection session to restore
-      const activeSession = (typeof Storage !== 'undefined' && Storage.getActiveSession)
-        ? Storage.getActiveSession()
-        : null;
+      // Check if THIS tab has an active reconnection session to restore (never hijack spectator mode)
+      if (!_isSpectator) {
+        const activeSession = (typeof Storage !== 'undefined' && Storage.getActiveSession)
+          ? Storage.getActiveSession()
+          : null;
 
-      if (activeSession && activeSession.token) {
-        reconnectSession(activeSession.token, activeSession.roomCode, activeSession.playerId);
-      } else if (_reconnectToken && _roomCode) {
-        reconnectSession(_reconnectToken, _roomCode, _playerId);
+        if (activeSession && activeSession.token) {
+          reconnectSession(activeSession.token, activeSession.roomCode, activeSession.playerId);
+        } else if (_reconnectToken && _roomCode) {
+          reconnectSession(_reconnectToken, _roomCode, _playerId);
+        }
       }
     });
 
@@ -162,34 +185,82 @@ const OnlineClient = (() => {
 
     // Real-time lobby updates
     _socket.on('room_updated', (roomSummary) => {
-      MenuUI.updateWaitingRoom(roomSummary, _playerId);
+      MenuUI.updateWaitingRoom(roomSummary, _isSpectator ? _spectatorId : _playerId, _isSpectator);
+      if (App && App.handleSpectatorsUpdated && roomSummary) {
+        App.handleSpectatorsUpdated({
+          spectators: roomSummary.spectators || [],
+          spectator_count: roomSummary.spectator_count || 0,
+        });
+      }
     });
 
-    // Game started signal
+    // Game started signal (for both players and live spectators)
     _socket.on('game_started', (data) => {
+      _matchId = (data && data.match_id) || null;
+      _postMatchStatus = null;
       if (typeof MenuUI !== 'undefined' && MenuUI.clearLobbyChat) {
         MenuUI.clearLobbyChat();
       }
+      if (typeof App !== 'undefined' && App.clearStageChatsOnMatchStart) {
+        App.clearStageChatsOnMatchStart();
+      }
       MenuUI.hideWaitingRoom();
       Screens.go('screen-game');
-      if (typeof App !== 'undefined' && App.activateGameBackGuard) {
+      if (!_isSpectator && typeof App !== 'undefined' && App.activateGameBackGuard) {
         App.activateGameBackGuard();
       }
       TableUI.init({
-        roomCode:   _roomCode,
-        deckCount:  1,
-        playerName: _playerName,
+        roomCode:   (data && data.room_code) || _roomCode,
+        deckCount:  (data && data.deck_count) || 1,
+        playerName: _isSpectator ? (_spectatorName || 'Spectator') : _playerName,
       });
-      if (typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
+      if (typeof TableUI.setSpectatorMode === 'function') {
+        TableUI.setSpectatorMode(_isSpectator);
+      }
+      if (typeof TableUI.setOnlineControlsVisible === 'function') {
+        TableUI.setOnlineControlsVisible(true, _isSpectator);
+      }
+      // Spectators NEVER automatically join voice chat
+      if (!_isSpectator && typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
         VoiceClient.startVoice(_socket, _roomCode, _playerId, _playerName);
       }
-      showToast('Game started! Distributing cards…', 'info', 2000);
+      showToast(_isSpectator ? 'Match started! Spectating live…' : 'Game started! Distributing cards…', 'info', 2000);
     });
 
-    // Authoritative personalized game state
+    // Authoritative personalized game state (players only)
     _socket.on('game_state', (state) => {
+      if (_isSpectator) return;
       if (App && App.renderOnlineState) {
         App.renderOnlineState(state);
+      }
+    });
+
+    // Stage 4: Server-sanitized public state (spectators only)
+    _socket.on('spectator_state', (state) => {
+      if (App && App.renderSpectatorState) {
+        App.renderSpectatorState(state);
+      }
+    });
+
+    // Stage 4: Live spectator count & display names
+    _socket.on('spectators_updated', (summary) => {
+      if (App && App.handleSpectatorsUpdated) {
+        App.handleSpectatorsUpdated(summary);
+      }
+    });
+
+    // Stage 2: Live post-match readiness & Play Again eligibility
+    _socket.on('post_match_status', (status) => {
+      _postMatchStatus = status;
+      if (App && App.handlePostMatchStatus) {
+        App.handlePostMatchStatus(status);
+      }
+    });
+
+    // Stage 3: Independent stage chat messages (pre_match, in_match, post_match)
+    _socket.on('chat_message', (msg) => {
+      if (App && App.handleStageChatMessage) {
+        App.handleStageChatMessage(msg);
       }
     });
 
@@ -209,6 +280,9 @@ const OnlineClient = (() => {
 
     // Game completed (KAZHUDHAI declared)
     _socket.on('game_over', (data) => {
+      if (data && data.post_match_status) {
+        _postMatchStatus = data.post_match_status;
+      }
       if (App && App.showOnlineResults) {
         App.showOnlineResults(data);
       }
@@ -242,10 +316,10 @@ const OnlineClient = (() => {
       }
     });
 
-    // Real-time lobby chat messages
+    // Real-time lobby chat messages (backward-compatible pre-match broadcast)
     _socket.on('lobby_chat_message', (msg) => {
       if (typeof MenuUI !== 'undefined' && MenuUI.addLobbyChatMessage) {
-        MenuUI.addLobbyChatMessage(msg, _playerId);
+        MenuUI.addLobbyChatMessage(msg, _isSpectator ? _spectatorId : _playerId);
       }
     });
 
@@ -402,10 +476,14 @@ const OnlineClient = (() => {
         return;
       }
 
-      _roomCode       = res.room_code;
-      _playerId       = res.player_id;
-      _isHost         = true;
-      _reconnectToken = res.reconnect_token;
+      _roomCode        = res.room_code;
+      _playerId        = res.player_id;
+      _isHost          = true;
+      _reconnectToken  = res.reconnect_token;
+      _isSpectator     = false;
+      _spectatorId     = null;
+      _spectatorName   = null;
+      _postMatchStatus = null;
 
       // Save session in persistent Storage for resilient reconnect across app restarts
       if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
@@ -442,12 +520,14 @@ const OnlineClient = (() => {
     }
 
     _playerName = playerName;
-    const cleanRoomCode = (roomCode || '').trim().toUpperCase();
+    const cleanRoomCode = (roomCode || '').replace(/\s+/g, '').toUpperCase();
 
-    // Only supply reconnectToken if there is an active session specifically for THIS room
+    // Only supply reconnectToken if THIS tab holds an active session specifically for THIS room
     let tokenToSend = null;
-    if (typeof Storage !== 'undefined' && Storage.getActiveSession) {
-      const activeSession = Storage.getActiveSession();
+    if (typeof Storage !== 'undefined') {
+      const activeSession = Storage.getTabSession
+        ? Storage.getTabSession()
+        : (Storage.getActiveSession ? Storage.getActiveSession() : null);
       if (activeSession && activeSession.roomCode === cleanRoomCode) {
         tokenToSend = activeSession.token;
       }
@@ -468,11 +548,15 @@ const OnlineClient = (() => {
         return;
       }
 
-      _roomCode       = res.room_code;
-      _playerId       = res.player_id;
-      _playerName     = res.player_name || playerName;
-      _isHost         = res.is_host;
-      _reconnectToken = res.reconnect_token;
+      _roomCode        = res.room_code;
+      _playerId        = res.player_id;
+      _playerName      = res.player_name || playerName;
+      _isHost          = res.is_host;
+      _reconnectToken  = res.reconnect_token;
+      _isSpectator     = false;
+      _spectatorId     = null;
+      _spectatorName   = null;
+      _postMatchStatus = res.post_match_status || null;
 
       if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
         Storage.saveActiveSession({
@@ -496,10 +580,22 @@ const OnlineClient = (() => {
           playerName: _playerName,
           isReconnect: true,
         });
+        if (typeof TableUI.setSpectatorMode === 'function') {
+          TableUI.setSpectatorMode(false);
+        }
+        if (typeof TableUI.setOnlineControlsVisible === 'function') {
+          TableUI.setOnlineControlsVisible(true, false);
+        }
         if (typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
           VoiceClient.startVoice(_socket, _roomCode, _playerId, _playerName);
         }
         showToast(`Re-joined room ${res.room_code}!`, 'success', 2500);
+      } else if (res.room_status === 'finished') {
+        MenuUI.hideModal('modal-online-lobby');
+        if (typeof App !== 'undefined' && App.handlePostMatchStatus && res.post_match_status) {
+          App.handlePostMatchStatus(res.post_match_status);
+        }
+        showToast(`Re-joined finished room ${res.room_code}`, 'success', 2500);
       } else {
         // Successfully joined waiting room
         MenuUI.hideModal('modal-online-lobby');
@@ -515,7 +611,7 @@ const OnlineClient = (() => {
    * Host starts the game.
    */
   function startGame() {
-    if (!_socket || !_isHost || !_roomCode) return;
+    if (_isSpectator || !_socket || !_isHost || !_roomCode) return;
 
     _socket.emit('start_game', {
       roomCode: _roomCode,
@@ -531,6 +627,7 @@ const OnlineClient = (() => {
    * Play a card in the online game.
    */
   function playCard(cardId) {
+    if (_isSpectator) return;
     if (!_socket || !_roomCode || !_playerId) {
       if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
         TableUI.resetPlayInFlight();
@@ -557,12 +654,12 @@ const OnlineClient = (() => {
   }
 
   /**
-   * Restart game (host only)
+   * Restart game (existing host-controlled Restart Game — preserved unchanged)
    */
   function restartGame() {
-    if (!_socket || !_roomCode || !_playerId) return;
+    if (_isSpectator || !_socket || !_roomCode || !_playerId) return;
     if (_isHost) {
-      _socket.emit('start_game', {
+      _socket.emit('restart_game', {
         roomCode: _roomCode,
         playerId: _playerId,
       }, (res) => {
@@ -573,6 +670,146 @@ const OnlineClient = (() => {
     } else {
       showToast('Only the host can restart the game', 'info');
     }
+  }
+
+  /**
+   * Stage 2: Toggle post-match Ready / Not Ready status.
+   */
+  function setPostMatchReady(ready, callback) {
+    if (_isSpectator || !_socket || !_roomCode || !_playerId) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Not eligible to set ready status' });
+      return;
+    }
+    _socket.emit('set_post_match_ready', {
+      roomCode: _roomCode,
+      playerId: _playerId,
+      ready:    !!ready,
+    }, (res) => {
+      if (res && res.success && res.post_match_status) {
+        _postMatchStatus = res.post_match_status;
+      }
+      if (typeof callback === 'function') callback(res);
+    });
+  }
+
+  /**
+   * Stage 2: Request post-match Play Again (server validates all 4 conditions under lock).
+   */
+  function playAgain(callback) {
+    if (_isSpectator || !_socket || !_roomCode || !_playerId) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Not eligible for Play Again' });
+      return;
+    }
+    _socket.emit('play_again', {
+      roomCode: _roomCode,
+      playerId: _playerId,
+    }, (res) => {
+      if (res && !res.success) {
+        showToast(res.message || 'Cannot start Play Again yet', 'info', 2500);
+      }
+      if (typeof callback === 'function') callback(res);
+    });
+  }
+
+  /**
+   * Stage 4: Join a waiting or active room as a live spectator.
+   */
+  async function joinAsSpectator({ roomCode, spectatorName }, callback) {
+    let socket = null;
+    try {
+      socket = await _ensureConnected();
+    } catch (err) {
+      console.error('[OnlineClient] joinAsSpectator connect error:', err);
+      const msg = err.message || 'Cannot reach game server.';
+      if (typeof callback === 'function') callback({ success: false, message: msg });
+      return;
+    }
+
+    const cleanCode = (roomCode || '').trim().toUpperCase();
+    const cleanName = (spectatorName || 'Spectator').trim() || 'Spectator';
+
+    socket.emit('join_as_spectator', {
+      roomCode: cleanCode,
+      spectatorName: cleanName,
+    }, (res) => {
+      if (!res || !res.success) {
+        const msg = (res && res.message) || 'Could not join room as spectator';
+        if (typeof callback === 'function') callback({ success: false, message: msg });
+        return;
+      }
+
+      _roomCode        = res.room_code;
+      _playerId        = null;
+      _playerName      = null;
+      _isHost          = false;
+      _reconnectToken  = null;
+      _isSpectator     = true;
+      _spectatorId     = res.spectator_id;
+      _spectatorName   = res.spectator_name || cleanName;
+      _matchId         = res.match_id || null;
+      _postMatchStatus = null;
+
+      MenuUI.hideModal('modal-spectate');
+
+      if (res.room_status === 'waiting') {
+        MenuUI.showWaitingRoom(res.room, _spectatorId, true);
+        showToast(`Spectating lobby ${res.room_code}`, 'success', 2500);
+      } else if (res.room_status === 'playing') {
+        Screens.go('screen-game');
+        TableUI.init({
+          roomCode:   _roomCode,
+          deckCount:  (res.room && res.room.deck_count) || (res.spectator_state && res.spectator_state.deck_count) || 1,
+          playerName: _spectatorName,
+        });
+        if (typeof TableUI.setSpectatorMode === 'function') {
+          TableUI.setSpectatorMode(true);
+        }
+        if (typeof TableUI.setOnlineControlsVisible === 'function') {
+          TableUI.setOnlineControlsVisible(true, true);
+        }
+        if (typeof App !== 'undefined' && App.clearStageChatsOnMatchStart) {
+          App.clearStageChatsOnMatchStart();
+        }
+        if (res.spectator_state && typeof App !== 'undefined' && App.renderSpectatorState) {
+          App.renderSpectatorState(res.spectator_state);
+        }
+        showToast(`Spectating live match in ${res.room_code}`, 'success', 2500);
+      }
+
+      if (typeof App !== 'undefined' && App.handleSpectatorsUpdated) {
+        App.handleSpectatorsUpdated({
+          spectators: res.spectators || [],
+          spectator_count: res.spectator_count || 0,
+        });
+      }
+
+      if (typeof callback === 'function') callback(res);
+    });
+  }
+
+  /**
+   * Stage 4: Cleanly leave spectator mode.
+   */
+  function leaveSpectator(onComplete) {
+    if (typeof MenuUI !== 'undefined' && MenuUI.clearLobbyChat) {
+      MenuUI.clearLobbyChat();
+    }
+    if (_socket && _roomCode && _spectatorId) {
+      _socket.emit('leave_spectator', {
+        roomCode:    _roomCode,
+        spectatorId: _spectatorId,
+      }, () => {
+        if (typeof onComplete === 'function') onComplete();
+      });
+    } else if (typeof onComplete === 'function') {
+      onComplete();
+    }
+    _roomCode        = null;
+    _spectatorId     = null;
+    _spectatorName   = null;
+    _isSpectator     = false;
+    _matchId         = null;
+    _postMatchStatus = null;
   }
 
   /**
@@ -604,11 +841,14 @@ const OnlineClient = (() => {
     socket.emit('reconnect_session', payload, (res) => {
       _isReconnecting = false;
       if (res && res.success) {
-        _roomCode       = res.room_code;
-        _playerId       = res.player_id;
-        _playerName     = res.player_name;
-        _isHost         = res.is_host;
-        _reconnectToken = token;
+        _roomCode        = res.room_code;
+        _playerId        = res.player_id;
+        _playerName      = res.player_name;
+        _isHost          = res.is_host;
+        _reconnectToken  = token;
+        _isSpectator     = false;
+        _spectatorId     = null;
+        _postMatchStatus = res.post_match_status || null;
 
         if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
           Storage.saveActiveSession({
@@ -623,7 +863,7 @@ const OnlineClient = (() => {
         console.log('[OnlineClient] Successfully reconnected to room', _roomCode);
 
         if (res.room_status === 'waiting') {
-          MenuUI.showWaitingRoom(res.room, _playerId);
+          MenuUI.showWaitingRoom(res.room, _playerId, false);
         } else if (res.room_status === 'playing') {
           Screens.go('screen-game');
           if (typeof App !== 'undefined' && App.activateGameBackGuard) {
@@ -635,17 +875,37 @@ const OnlineClient = (() => {
             playerName: _playerName,
             isReconnect: true,
           });
+          if (typeof TableUI.setSpectatorMode === 'function') {
+            TableUI.setSpectatorMode(false);
+          }
+          if (typeof TableUI.setOnlineControlsVisible === 'function') {
+            TableUI.setOnlineControlsVisible(true, false);
+          }
           if (typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
             VoiceClient.startVoice(_socket, _roomCode, _playerId, _playerName);
+          }
+        } else if (res.room_status === 'finished' && res.game_over) {
+          if (typeof App !== 'undefined' && App.showOnlineResults) {
+            App.showOnlineResults(res.game_over);
           }
         }
         showToast(`Reconnected to room ${_roomCode}`, 'success', 3000);
       } else {
-        if (typeof Storage !== 'undefined' && Storage.clearActiveSession) {
-          Storage.clearActiveSession();
+        // Only clear stale session if this tab has not already joined/created a newer room
+        const currentSess = (typeof Storage !== 'undefined' && Storage.getTabSession)
+          ? Storage.getTabSession()
+          : null;
+        if (!currentSess || currentSess.token === token) {
+          if (typeof Storage !== 'undefined' && Storage.clearActiveSession) {
+            Storage.clearActiveSession();
+          }
+          if (!_roomCode) {
+            _reconnectToken = null;
+            if (typeof Screens !== 'undefined' && Screens.current && Screens.current() !== 'screen-menu') {
+              Screens.go('screen-menu');
+            }
+          }
         }
-        _reconnectToken = null;
-        Screens.go('screen-menu');
       }
     });
   }
@@ -654,6 +914,7 @@ const OnlineClient = (() => {
    * Send an emoji reaction to all players in the room.
    */
   function sendReaction(emoji) {
+    if (_isSpectator) return;
     if (_socket && _socket.connected && _roomCode && _playerId) {
       _socket.emit('send_reaction', {
         roomCode: _roomCode,
@@ -664,10 +925,36 @@ const OnlineClient = (() => {
   }
 
   /**
-   * Send a real-time lobby chat message.
+   * Stage 3: Send a message in one of the three independent chat stages:
+   * 'pre_match', 'in_match', or 'post_match'. Works for both players and spectators.
+   */
+  function sendStageChatMessage(stage, message, callback) {
+    const senderId = getCurrentSenderId();
+    if (!_socket || !_roomCode || !senderId) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Not connected to room' });
+      return;
+    }
+    const text = (message || '').trim();
+    if (!text) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Message cannot be empty' });
+      return;
+    }
+    _socket.emit('send_chat_message', {
+      roomCode: _roomCode,
+      senderId: senderId,
+      stage:    stage,
+      message:  text,
+    }, (res) => {
+      if (typeof callback === 'function') callback(res);
+    });
+  }
+
+  /**
+   * Send a real-time pre-match lobby chat message (players + spectators).
    */
   function sendLobbyChatMessage(message, callback) {
-    if (!_socket || !_roomCode || !_playerId) {
+    const senderId = getCurrentSenderId();
+    if (!_socket || !_roomCode || !senderId) {
       if (typeof callback === 'function') callback({ success: false, message: 'Not connected to room' });
       return;
     }
@@ -678,7 +965,7 @@ const OnlineClient = (() => {
     }
     _socket.emit('send_lobby_chat', {
       roomCode: _roomCode,
-      playerId: _playerId,
+      playerId: senderId,
       message: text,
     }, (res) => {
       if (typeof callback === 'function') callback(res);
@@ -686,9 +973,13 @@ const OnlineClient = (() => {
   }
 
   /**
-   * Leave the waiting room or game.
+   * Leave the waiting room, game, post-match room, or spectator view cleanly.
    */
   function leaveRoom(reason = 'left', onComplete) {
+    if (_isSpectator) {
+      leaveSpectator(onComplete);
+      return;
+    }
     if (typeof VoiceClient !== 'undefined' && VoiceClient.leaveVoice) {
       VoiceClient.leaveVoice();
     }
@@ -700,16 +991,18 @@ const OnlineClient = (() => {
         roomCode: _roomCode,
         playerId: _playerId,
         reason:   reason,
-      }, (res) => {
+      }, () => {
         if (typeof onComplete === 'function') onComplete();
       });
     } else {
       if (typeof onComplete === 'function') onComplete();
     }
-    _roomCode = null;
-    _playerId = null;
-    _isHost   = false;
-    _reconnectToken = null;
+    _roomCode        = null;
+    _playerId        = null;
+    _isHost          = false;
+    _reconnectToken  = null;
+    _matchId         = null;
+    _postMatchStatus = null;
     if (typeof Storage !== 'undefined' && Storage.clearActiveSession) {
       Storage.clearActiveSession();
     }
@@ -734,13 +1027,22 @@ const OnlineClient = (() => {
     getRoomCode,
     isHost,
     getPlayerId,
+    isSpectator,
+    getSpectatorId,
+    getCurrentSenderId,
+    getPostMatchStatus,
     createRoom,
     joinRoom,
+    joinAsSpectator,
+    leaveSpectator,
     startGame,
     restartGame,
+    setPostMatchReady,
+    playAgain,
     playCard,
     sendReaction,
     sendLobbyChatMessage,
+    sendStageChatMessage,
     leaveRoom,
     reconnectSession,
     disconnect,

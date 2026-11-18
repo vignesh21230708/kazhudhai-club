@@ -224,6 +224,160 @@
     max-width: 52px;
     gap: 1px;
   }
+
+  /* 8, 9 & 10 Players in Landscape Mobile */
+  .table-inner.players-8,
+  .table-inner.players-9,
+  .table-inner.players-10 {
+    padding: 3px 6px;
+    gap: 2px 6px;
+  }
+
+  .table-inner.players-8 .opponents-top,
+  .table-inner.players-9 .opponents-top,
+  .table-inner.players-10 .opponents-top {
+    gap: 8px;
+    padding-top: 0;
+    align-items: center;
+  }
+
+  .table-inner.players-8 .opponents-left,
+  .table-inner.players-8 .opponents-right,
+  .table-inner.players-9 .opponents-left,
+  .table-inner.players-9 .opponents-right,
+  .table-inner.players-10 .opponents-left,
+  .table-inner.players-10 .opponents-right {
+    grid-row: 1 / 4;
+    gap: 3px;
+    justify-content: space-evenly;
+    height: 100%;
+    max-height: 100%;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+
+  .table-inner.players-8 .opponents-right,
+  .table-inner.players-9 .opponents-right,
+  .table-inner.players-10 .opponents-right {
+    padding-right: 46px;
+  }
+
+  .table-inner.players-8 .opponent-slot,
+  .table-inner.players-9 .opponent-slot,
+  .table-inner.players-10 .opponent-slot,
+  .table-inner.players-8 .opponent-slot.side,
+  .table-inner.players-9 .opponent-slot.side,
+  .table-inner.players-10 .opponent-slot.side {
+    flex-direction: row;
+    flex-wrap: nowrap;
+    align-items: center;
+    max-width: 148px;
+    gap: 3px;
+  }
+
+  .table-inner.players-8 .opponent-avatar,
+  .table-inner.players-9 .opponent-avatar,
+  .table-inner.players-10 .opponent-avatar {
+    width: 20px;
+    height: 20px;
+    font-size: 0.68rem;
+  }
+
+  .table-inner.players-8 .opponent-name,
+  .table-inner.players-9 .opponent-name,
+  .table-inner.players-10 .opponent-name {
+    font-size: 0.54rem;
+    min-width: 34px;
+    max-width: 54px;
+    flex-shrink: 0;
+  }
+
+  .table-inner.players-8 .opponent-card-count,
+  .table-inner.players-9 .opponent-card-count,
+  .table-inner.players-10 .opponent-card-count {
+    font-size: 0.5rem;
+    white-space: nowrap;
+  }
+
+  .table-inner.players-8 .player-pos-badge,
+  .table-inner.players-9 .player-pos-badge,
+  .table-inner.players-10 .player-pos-badge {
+    font-size: 0.48rem;
+    padding: 0 3px;
+    margin-bottom: 0;
+  }
+
+  .table-inner.players-8 .opponent-hand-fan,
+  .table-inner.players-9 .opponent-hand-fan,
+  .table-inner.players-10 .opponent-hand-fan {
+    display: none;
+  }
+
+  .table-inner.players-8 .centre-area,
+  .table-inner.players-9 .centre-area,
+  .table-inner.players-10 .centre-area {
+    flex-direction: row;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding-bottom: 24px;
+  }
+
+  .table-inner.players-8 .played-cards-zone,
+  .table-inner.players-9 .played-cards-zone,
+  .table-inner.players-10 .played-cards-zone {
+    min-width: 140px;
+    min-height: 54px;
+    padding: 3px 8px;
+  }
+
+  .table-inner.players-8 .zone-label,
+  .table-inner.players-9 .zone-label,
+  .table-inner.players-10 .zone-label {
+    font-size: 0.52rem;
+    margin-bottom: 2px;
+  }
+
+  .table-inner.players-8 .played-cards-row,
+  .table-inner.players-9 .played-cards-row,
+  .table-inner.players-10 .played-cards-row {
+    min-height: 44px;
+    gap: 4px;
+  }
+
+  .table-inner.players-8 .played-cards-row .playing-card,
+  .table-inner.players-9 .played-cards-row .playing-card,
+  .table-inner.players-10 .played-cards-row .playing-card {
+    width: 34px;
+    height: 48px;
+  }
+
+  .table-inner.players-8 .played-cards-row .card-rank,
+  .table-inner.players-9 .played-cards-row .card-rank,
+  .table-inner.players-10 .played-cards-row .card-rank {
+    font-size: 0.6rem;
+  }
+
+  .table-inner.players-8 .played-cards-row .card-center-suit,
+  .table-inner.players-9 .played-cards-row .card-center-suit,
+  .table-inner.players-10 .played-cards-row .card-center-suit {
+    font-size: 1rem;
+  }
+
+  .table-inner.players-8 .pile-stack,
+  .table-inner.players-9 .pile-stack,
+  .table-inner.players-10 .pile-stack {
+    width: 24px;
+    height: 34px;
+  }
+
+  .table-inner.players-8 .turn-indicator,
+  .table-inner.players-9 .turn-indicator,
+  .table-inner.players-10 .turn-indicator {
+    bottom: 2px;
+    font-size: 0.64rem;
+    padding: 1px 10px;
+  }
 }
 
 /* ── Touch devices — interaction improvements ── */
@@ -506,6 +660,93 @@
     width: 13px;
     height: 18px;
     margin-left: -7px;
+  }
+
+  /* 8, 9 & 10-Player Balanced Mobile Portrait Layouts */
+  .table-inner.players-8 .opponents-top,
+  .table-inner.players-9 .opponents-top,
+  .table-inner.players-10 .opponents-top {
+    gap: 3px;
+    padding-top: 0;
+  }
+
+  .table-inner.players-8 .opponents-left,
+  .table-inner.players-8 .opponents-right,
+  .table-inner.players-9 .opponents-left,
+  .table-inner.players-9 .opponents-right,
+  .table-inner.players-10 .opponents-left,
+  .table-inner.players-10 .opponents-right {
+    grid-row: 2 / 4;
+    gap: 2px;
+    justify-content: space-evenly;
+    padding-bottom: 4px;
+  }
+
+  .table-inner.players-8 .opponent-slot,
+  .table-inner.players-9 .opponent-slot,
+  .table-inner.players-10 .opponent-slot {
+    max-width: 44px;
+    min-width: 0;
+    gap: 1px;
+  }
+
+  .table-inner.players-8 .opponent-slot.side,
+  .table-inner.players-9 .opponent-slot.side,
+  .table-inner.players-10 .opponent-slot.side {
+    max-width: 44px;
+    gap: 1px;
+  }
+
+  .table-inner.players-8 .player-pos-badge,
+  .table-inner.players-9 .player-pos-badge,
+  .table-inner.players-10 .player-pos-badge {
+    font-size: 0.52rem;
+    padding: 0 3px;
+    margin-bottom: -1px;
+  }
+
+  .table-inner.players-8 .opponent-avatar,
+  .table-inner.players-9 .opponent-avatar,
+  .table-inner.players-10 .opponent-avatar {
+    width: 22px;
+    height: 22px;
+    font-size: 0.7rem;
+  }
+
+  .table-inner.players-8 .opponent-name,
+  .table-inner.players-9 .opponent-name,
+  .table-inner.players-10 .opponent-name {
+    font-size: 0.54rem;
+    max-width: 44px;
+    gap: 2px;
+  }
+
+  .table-inner.players-8 .opponent-card-count,
+  .table-inner.players-9 .opponent-card-count,
+  .table-inner.players-10 .opponent-card-count {
+    font-size: 0.5rem;
+  }
+
+  .table-inner.players-8 .opponent-hand-fan,
+  .table-inner.players-9 .opponent-hand-fan,
+  .table-inner.players-10 .opponent-hand-fan {
+    height: 14px;
+    max-width: 30px;
+  }
+
+  .table-inner.players-8 .opponent-card-back,
+  .table-inner.players-9 .opponent-card-back,
+  .table-inner.players-10 .opponent-card-back {
+    width: 10px;
+    height: 14px;
+    margin-left: -6px;
+  }
+
+  .table-inner.players-8 .ai-chip,
+  .table-inner.players-9 .ai-chip,
+  .table-inner.players-10 .ai-chip {
+    font-size: 0.42rem;
+    padding: 0 2px;
   }
 
   /* ── Centre Play Area ── */

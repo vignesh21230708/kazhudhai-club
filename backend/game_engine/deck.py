@@ -3,7 +3,7 @@ KAZHUDHAI CLUB — game_engine/deck.py
 Deck creation, shuffling, and A♠ deduplication.
 
 Exact Specifications:
-  - Number of decks: 1 to 5
+  - Number of decks: 1 to 6
   - 52 standard cards per deck (no jokers)
   - Retain exactly ONE Ace of Spades (A♠) across ALL selected decks
   - Remove all additional A♠ cards
@@ -15,6 +15,7 @@ Exact Specifications:
       3     | 154
       4     | 205
       5     | 256
+      6     | 307
   - Every physical card receives a unique internal ID (UUID4)
   - Card ranking: A > K > Q > J > 10 > 9 > 8 > 7 > 6 > 5 > 4 > 3 > 2
 """
@@ -41,8 +42,8 @@ SUIT_SYMBOLS: dict[str, str] = {'S': '♠', 'H': '♥', 'D': '♦', 'C': '♣'}
 
 def expected_card_count(num_decks: int) -> int:
     """Return the exact total number of cards for N decks according to rule."""
-    if num_decks < 1 or num_decks > 5:
-        raise ValueError(f"num_decks must be 1-5, got {num_decks}")
+    if num_decks < 1 or num_decks > 6:
+        raise ValueError(f"num_decks must be 1-6, got {num_decks}")
     return 52 * num_decks - (num_decks - 1)
 
 
@@ -59,8 +60,8 @@ def build_deck(num_decks: int, shuffle: bool = True, seed: int | None = None) ->
 
     Total cards = (52 × num_decks) − (num_decks − 1)
     """
-    if num_decks < 1 or num_decks > 5:
-        raise ValueError(f"num_decks must be 1-5, got {num_decks}")
+    if num_decks < 1 or num_decks > 6:
+        raise ValueError(f"num_decks must be 1-6, got {num_decks}")
 
     cards: list[dict] = []
     ace_spades_retained = False
@@ -148,7 +149,7 @@ def shuffle_deck(cards: list[dict], seed: int | None = None) -> list[dict]:
     assert len(after_ids) == len(before_ids), "Card count must be preserved during shuffle"
     assert set(after_ids) == set(before_ids), "All physical cards must be preserved during shuffle"
     if n > 10:
-        # A full deck of 52-256 cards should never remain in identical order after random shuffle
+        # A full deck of 52-307 cards should never remain in identical order after random shuffle
         assert after_ids != before_ids, "Shuffled deck order must differ from pre-shuffle order"
 
         # Verify deck order is never reused from previous match

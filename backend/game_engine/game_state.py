@@ -26,7 +26,7 @@ class GameState:
         """
         :param game_id:        Unique game identifier
         :param player_configs: List of {'id': str, 'name': str, 'is_ai': bool}
-        :param num_decks:      Number of card decks (1–5)
+        :param num_decks:      Number of card decks (1–6)
         :param difficulty:     AI difficulty ('easy', 'medium', 'hard')
         """
         self.game_id     = game_id
@@ -501,6 +501,20 @@ class GameState:
     def get_state_for_player(self, player_id: str) -> dict:
         """Get state for a specific player (including their own hand)."""
         return self._build_state(requesting_player_id=player_id)
+
+    def get_spectator_state(self) -> dict:
+        """
+        Build a strictly server-sanitized state payload for spectators.
+        NEVER includes any player's hidden hand, hidden card IDs, or hidden card faces.
+        Only public table data, player names/positions/card counts, and already-played
+        face-up cards are returned.
+        """
+        state = self._build_state(requesting_player_id=None)
+        state.pop('my_hand', None)
+        state['is_spectator'] = True
+        state['is_my_turn']   = False
+        state['legal_suit']   = None
+        return state
 
     # ── Helpers ──
 

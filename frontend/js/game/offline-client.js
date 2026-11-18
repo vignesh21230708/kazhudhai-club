@@ -61,20 +61,6 @@ const OfflineClient = (() => {
   }
 
   /**
-   * Fast-forward remaining AI turns to immediate completion.
-   */
-  async function fastForward() {
-    if (!_gameId) return null;
-    const res = await fetch(`${BASE}/fast_forward`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ game_id: _gameId }),
-    });
-    if (!res.ok) throw new Error(`Fast-forward error: ${res.status}`);
-    return res.json();
-  }
-
-  /**
    * Poll for current game state.
    */
   async function getState() {
@@ -92,5 +78,5 @@ const OfflineClient = (() => {
     return _gameId;
   }
 
-  return { startGame, playCard, step, fastForward, getState, reset, getGameId };
+  return { startGame, playCard, step, getState, reset, getGameId };
 })();

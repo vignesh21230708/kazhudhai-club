@@ -21,11 +21,14 @@ def start():
     """Start a new offline game session."""
     data = request.get_json() or {}
     player_name  = (data.get('playerName') or 'Player').strip()[:16]
-    player_count = max(2, min(7, int(data.get('playerCount', 4))))
-    num_decks    = max(1, min(5, int(data.get('deckCount', 1))))
+    player_count = max(2, min(10, int(data.get('playerCount', 4))))
+    num_decks    = max(1, min(6, int(data.get('deckCount', 1))))
     difficulty   = data.get('difficulty', 'medium')
 
-    ai_names = ['Bot Ravi', 'Bot Priya', 'Bot Kumar', 'Bot Leela', 'Bot Arjun', 'Bot Deepa']
+    ai_names = [
+        'Bot Ravi', 'Bot Priya', 'Bot Kumar', 'Bot Leela', 'Bot Arjun',
+        'Bot Deepa', 'Bot Meena', 'Bot Vikram', 'Bot Divya',
+    ]
 
     player_configs = [{'id': HUMAN_PLAYER_ID, 'name': player_name, 'is_ai': False}]
     for i in range(player_count - 1):

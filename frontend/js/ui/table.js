@@ -38,6 +38,15 @@ const TableUI = (() => {
     DOM.emojiPanel     = document.getElementById('emoji-picker-panel');
     DOM.turnTimerBadge = document.getElementById('turn-timer-badge');
     DOM.turnCountdownVal = document.getElementById('turn-countdown-val');
+    DOM.btnSpectatorList = document.getElementById('btn-spectator-list');
+    DOM.hudSpectatorCount = document.getElementById('hud-spectator-count');
+    DOM.spectatorPopover = document.getElementById('spectator-list-popover');
+    DOM.spectatorPopoverCount = document.getElementById('spectator-popover-count');
+    DOM.spectatorPopoverList = document.getElementById('spectator-popover-list');
+    DOM.btnIngameChat = document.getElementById('btn-ingame-chat');
+    DOM.spectatorModeBanner = document.getElementById('spectator-mode-banner');
+    DOM.actionBar = document.getElementById('action-bar');
+    DOM.selfInfoRow = document.querySelector('#player-self-area .self-info-row');
   }
 
   let _eventsBound = false;
@@ -292,6 +301,48 @@ const TableUI = (() => {
       });
     }
 
+    // Stage 4: Live spectator list popover toggle
+    if (DOM.btnSpectatorList) {
+      bindTap(DOM.btnSpectatorList, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (DOM.spectatorPopover) {
+          DOM.spectatorPopover.classList.toggle('hidden');
+        }
+      });
+    }
+
+    const closeSpecPopBtn = document.getElementById('btn-close-spectator-popover');
+    if (closeSpecPopBtn) {
+      bindTap(closeSpecPopBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        if (DOM.spectatorPopover) DOM.spectatorPopover.classList.add('hidden');
+      });
+    }
+
+    // Stage 4: Leave spectator table button
+    const leaveSpecTableBtn = document.getElementById('btn-leave-spectator-table');
+    if (leaveSpecTableBtn) {
+      bindTap(leaveSpecTableBtn, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        Sound.click();
+        if (typeof App !== 'undefined' && App.exitToMenu) {
+          App.exitToMenu();
+        }
+      });
+    }
+
+    // Stage 3: In-match chat toggle button
+    if (DOM.btnIngameChat) {
+      bindTap(DOM.btnIngameChat, (e) => {
+        if (e && typeof e.preventDefault === 'function') e.preventDefault();
+        if (e && typeof e.stopPropagation === 'function') e.stopPropagation();
+        if (typeof App !== 'undefined' && App.toggleInMatchChat) {
+          App.toggleInMatchChat();
+        }
+      });
+    }
+
     // Emoji reaction button (toggle panel)
     if (DOM.btnEmoji) {
       bindTap(DOM.btnEmoji, (e) => {
@@ -378,6 +429,9 @@ const TableUI = (() => {
    * 5 players: Left: 1 (P1), Top: 3 (P2, P3, P4), Right: 1 (P5)
    * 6 players: Left: 2 (P1, P2), Top: 2 (P3, P4), Right: 2 (P5, P6)
    * 7 players: Left: 2 (P1, P2), Top: 3 (P3, P4, P5), Right: 2 (P6, P7)
+   * 8 players: Left: 2, Top: 4, Right: 2
+   * 9 players: Left: 3, Top: 3, Right: 3
+   * 10 players: Left: 3, Top: 4, Right: 3
    */
   function _getTableDistribution(totalPlayers) {
     switch (totalPlayers) {
@@ -393,6 +447,12 @@ const TableUI = (() => {
         return { top: 2, left: 2, right: 2 };
       case 7:
         return { top: 3, left: 2, right: 2 };
+      case 8:
+        return { top: 4, left: 2, right: 2 };
+      case 9:
+        return { top: 3, left: 3, right: 3 };
+      case 10:
+        return { top: 4, left: 3, right: 3 };
       default: {
         const side = Math.max(0, Math.floor((totalPlayers - 1) / 3));
         const top = Math.max(1, totalPlayers - side * 2);
@@ -401,7 +461,7 @@ const TableUI = (() => {
     }
   }
 
-  // Backward compatibility distribution function
+  // Balanced opponent distribution for 2–10 total players (1–9 opponents + local player at bottom)
   function _getOpponentDistribution(count) {
     switch (count) {
       case 1:
@@ -416,6 +476,12 @@ const TableUI = (() => {
         return { top: 1, left: 2, right: 2 };
       case 6:
         return { top: 2, left: 2, right: 2 };
+      case 7:
+        return { top: 3, left: 2, right: 2 };
+      case 8:
+        return { top: 2, left: 3, right: 3 };
+      case 9:
+        return { top: 3, left: 3, right: 3 };
       default: {
         const side = Math.max(0, Math.floor(count / 3));
         const top = Math.max(0, count - side * 2);
@@ -511,6 +577,118 @@ const TableUI = (() => {
 
   function renderOpponents(opponents, myId) {
     renderPlayers(opponents, myId);
+  }
+
+  /**
+   * Stage 4: Render ALL players (2–10) around the felt table for live spectators.
+   * Displays player positions, names, connection indicators, remaining card counts,
+   * and face-down card-back fans without exposing any hidden card identities.
+   */
+  function renderSpectatorPlayers(players) {
+    if (!DOM.opponentsTop) _cache();
+
+    DOM.opponentsTop.innerHTML   = '';
+    DOM.opponentsLeft.innerHTML  = '';
+    DOM.opponentsRight.innerHTML = '';
+
+    const totalPlayers = Array.isArray(players) ? players.length : 0;
+    if (totalPlayers === 0) return;
+
+    const tableEl = document.querySelector('.game-table');
+    const tableInner = document.querySelector('.table-inner');
+    if (tableEl) {
+      tableEl.setAttribute('data-player-count', totalPlayers);
+    }
+    if (tableInner) {
+      tableInner.setAttribute('data-player-count', totalPlayers);
+      tableInner.className = `table-inner players-${totalPlayers} spectator-table`;
+    }
+
+    const dist = _getTableDistribution(totalPlayers);
+    const leftPlayers  = players.slice(0, dist.left);
+    const topPlayers   = players.slice(dist.left, dist.left + dist.top);
+    const rightPlayers = players.slice(dist.left + dist.top, dist.left + dist.top + dist.right);
+
+    let seatIdx = 1;
+    leftPlayers.forEach((p) => {
+      DOM.opponentsLeft.appendChild(_createPlayerSlot(p, 'left', p.position || seatIdx++, false));
+    });
+    topPlayers.forEach((p) => {
+      DOM.opponentsTop.appendChild(_createPlayerSlot(p, 'top', p.position || seatIdx++, false));
+    });
+    rightPlayers.forEach((p) => {
+      DOM.opponentsRight.appendChild(_createPlayerSlot(p, 'right', p.position || seatIdx++, false));
+    });
+  }
+
+  /**
+   * Stage 4: Toggle spectator-safe table UI (hides all player-only action controls).
+   */
+  function setSpectatorMode(isSpectator) {
+    if (!DOM.handContainer) _cache();
+    const spec = !!isSpectator;
+
+    if (DOM.selfInfoRow) DOM.selfInfoRow.classList.toggle('hidden', spec);
+    if (DOM.handContainer) DOM.handContainer.classList.toggle('hidden', spec);
+    if (DOM.actionBar) DOM.actionBar.classList.toggle('hidden', spec);
+    if (DOM.spectatorModeBanner) DOM.spectatorModeBanner.classList.toggle('hidden', !spec);
+    if (DOM.btnEmoji) DOM.btnEmoji.classList.toggle('hidden', spec);
+    if (DOM.emojiPanel && spec) DOM.emojiPanel.classList.add('hidden');
+
+    const restartBtn = document.getElementById('btn-restart-game');
+    if (restartBtn) restartBtn.classList.toggle('hidden', spec);
+
+    const voiceControls = document.getElementById('hud-voice-controls');
+    if (voiceControls && spec) voiceControls.classList.add('hidden');
+  }
+
+  /**
+   * Stage 3 & 4: Show or hide online-only HUD controls (spectator eye counter & in-match chat).
+   */
+  function setOnlineControlsVisible(isOnline, isSpectator = false) {
+    if (!DOM.btnSpectatorList) _cache();
+    if (DOM.btnSpectatorList) DOM.btnSpectatorList.classList.toggle('hidden', !isOnline);
+    if (DOM.btnIngameChat) DOM.btnIngameChat.classList.toggle('hidden', !isOnline);
+    if (!isOnline && DOM.spectatorPopover) DOM.spectatorPopover.classList.add('hidden');
+    if (isSpectator) {
+      const voiceControls = document.getElementById('hud-voice-controls');
+      if (voiceControls) voiceControls.classList.add('hidden');
+    }
+  }
+
+  /**
+   * Stage 4: Update live spectator count and display names in the HUD eye popover.
+   */
+  function updateSpectatorList(spectators, count) {
+    if (!DOM.hudSpectatorCount) _cache();
+    const list = Array.isArray(spectators) ? spectators : [];
+    const total = typeof count === 'number' ? count : list.length;
+
+    if (DOM.hudSpectatorCount) DOM.hudSpectatorCount.textContent = String(total);
+    if (DOM.spectatorPopoverCount) DOM.spectatorPopoverCount.textContent = String(total);
+
+    if (DOM.spectatorPopoverList) {
+      DOM.spectatorPopoverList.innerHTML = '';
+      if (list.length === 0) {
+        const hint = document.createElement('div');
+        hint.className = 'empty-spectators-hint';
+        hint.textContent = 'No spectators watching right now.';
+        DOM.spectatorPopoverList.appendChild(hint);
+      } else {
+        list.forEach((s) => {
+          const row = document.createElement('div');
+          row.className = 'spectator-popover-item';
+          const icon = document.createElement('span');
+          icon.textContent = '👁️';
+          const name = document.createElement('span');
+          name.className = 'spectator-popover-name';
+          name.textContent = s.name || 'Spectator';
+          row.appendChild(icon);
+          row.appendChild(name);
+          DOM.spectatorPopoverList.appendChild(row);
+        });
+      }
+    }
   }
 
   function _createPlayerSlot(opp, position, posNum, isSelf) {
@@ -677,24 +855,8 @@ const TableUI = (() => {
       DOM.handRow.innerHTML = '<div class="empty-zone-hint" style="color:#55dd88; font-weight:700; font-size:0.9rem; padding: 20px 0;">🎉 You emptied your hand and are SAFE! Watching remaining players…</div>';
       _syncSafeBadge(DOM.selfAvatar, true);
       _updateActionBar(false, null);
-
-      const actionBar = document.getElementById('action-bar');
-      if (actionBar && !document.getElementById('btn-fast-forward')) {
-        const ffBtn = document.createElement('button');
-        ffBtn.id = 'btn-fast-forward';
-        ffBtn.className = 'play-btn';
-        ffBtn.style.cssText = 'background: linear-gradient(135deg, #c9a84c, #7a5f20); color: #000; font-weight:900; margin-left: auto;';
-        ffBtn.textContent = '⚡ Fast-Forward to Results';
-        ffBtn.addEventListener('click', () => {
-          App.fastForwardGame();
-        });
-        actionBar.appendChild(ffBtn);
-      }
       return;
     }
-
-    // Clean up fast-forward button if hand is replenished (e.g. attack won)
-    document.getElementById('btn-fast-forward')?.remove();
 
     // Automatically sort human player's visible hand:
     // Group by suit (♠, ♥, ♦, ♣) and descending rank (A down to 2)
@@ -1094,10 +1256,21 @@ const TableUI = (() => {
     }
   }
 
+  function updateDeckCount(count) {
+    if (!DOM.hudDeckCount) _cache();
+    if (DOM.hudDeckCount && count) {
+      DOM.hudDeckCount.textContent = count;
+    }
+  }
+
   return {
     init,
     renderPlayers,
     renderOpponents,
+    renderSpectatorPlayers,
+    setSpectatorMode,
+    setOnlineControlsVisible,
+    updateSpectatorList,
     updateOpponent,
     renderHand,
     addPlayedCard,
@@ -1107,6 +1280,7 @@ const TableUI = (() => {
     showAttackBanner,
     hideAttackBanner,
     updateCommonPile,
+    updateDeckCount,
     setStatus,
     setTurn,
     updateTurnTimer,

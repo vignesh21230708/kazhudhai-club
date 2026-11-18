@@ -69,6 +69,11 @@
           <span class="btn-text">Play Online</span>
           <span class="btn-sub">With Real Players</span>
         </button>
+        <button class="menu-btn btn-secondary" id="btn-spectate-menu">
+          <span class="btn-icon">👁️</span>
+          <span class="btn-text">Spectate</span>
+          <span class="btn-sub">Watch a Live Room</span>
+        </button>
         <button class="menu-btn btn-secondary" id="btn-rules">
           <span class="btn-icon">📜</span>
           <span class="btn-text">Rules</span>
@@ -107,6 +112,9 @@
           <button class="sel-btn" data-value="5">5</button>
           <button class="sel-btn" data-value="6">6</button>
           <button class="sel-btn" data-value="7">7</button>
+          <button class="sel-btn" data-value="8">8</button>
+          <button class="sel-btn" data-value="9">9</button>
+          <button class="sel-btn" data-value="10">10</button>
         </div>
       </div>
 
@@ -118,6 +126,7 @@
           <button class="sel-btn" data-value="3">3</button>
           <button class="sel-btn" data-value="4">4</button>
           <button class="sel-btn" data-value="5">5</button>
+          <button class="sel-btn" data-value="6">6</button>
         </div>
         <p class="setup-hint" id="deck-card-count">1 deck = 52 cards</p>
       </div>
@@ -164,7 +173,7 @@
       <!-- TAB 1: Create Private Room -->
       <div id="tab-create-private" class="online-tab-pane active">
         <div class="setup-group">
-          <label class="setup-label">Max Players (2–7)</label>
+          <label class="setup-label">Max Players (2–10)</label>
           <div class="btn-selector" id="online-private-players">
             <button class="sel-btn" data-value="2">2</button>
             <button class="sel-btn" data-value="3">3</button>
@@ -172,6 +181,9 @@
             <button class="sel-btn" data-value="5">5</button>
             <button class="sel-btn" data-value="6">6</button>
             <button class="sel-btn" data-value="7">7</button>
+            <button class="sel-btn" data-value="8">8</button>
+            <button class="sel-btn" data-value="9">9</button>
+            <button class="sel-btn" data-value="10">10</button>
           </div>
         </div>
 
@@ -183,6 +195,7 @@
             <button class="sel-btn" data-value="3">3</button>
             <button class="sel-btn" data-value="4">4</button>
             <button class="sel-btn" data-value="5">5</button>
+            <button class="sel-btn" data-value="6">6</button>
           </div>
           <p class="setup-hint" id="online-deck-card-count">1 deck = 52 cards (Single A♠)</p>
         </div>
@@ -201,7 +214,7 @@
             id="private-room-code-input"
             class="setup-input room-code-input"
             placeholder="KZ----"
-            maxlength="6"
+            maxlength="12"
             autocapitalize="characters"
             autocomplete="off"
             autocorrect="off"
@@ -225,7 +238,7 @@
         <!-- Create Public Room Sub-panel -->
         <div id="create-public-panel" class="create-public-panel hidden">
           <div class="setup-group">
-            <label class="setup-label">Max Players (2–7)</label>
+            <label class="setup-label">Max Players (2–10)</label>
             <div class="btn-selector" id="online-public-players">
               <button class="sel-btn" data-value="2">2</button>
               <button class="sel-btn" data-value="3">3</button>
@@ -233,6 +246,9 @@
               <button class="sel-btn" data-value="5">5</button>
               <button class="sel-btn" data-value="6">6</button>
               <button class="sel-btn" data-value="7">7</button>
+              <button class="sel-btn" data-value="8">8</button>
+              <button class="sel-btn" data-value="9">9</button>
+              <button class="sel-btn" data-value="10">10</button>
             </div>
           </div>
           <div class="setup-group">
@@ -243,6 +259,7 @@
               <button class="sel-btn" data-value="3">3</button>
               <button class="sel-btn" data-value="4">4</button>
               <button class="sel-btn" data-value="5">5</button>
+              <button class="sel-btn" data-value="6">6</button>
             </div>
           </div>
           <button class="action-btn" id="btn-create-public-room">Launch Public Room</button>
@@ -282,6 +299,16 @@
         <!-- Player slots injected by JS -->
       </div>
 
+      <!-- Stage 4: Live Spectators in Waiting Room -->
+      <div class="waiting-spectators-box" id="waiting-spectators-section">
+        <div class="waiting-spectators-header">
+          <span>👁️ Spectators (<span id="waiting-spectator-count">0</span>)</span>
+        </div>
+        <div class="waiting-spectators-list" id="waiting-spectator-names">
+          <span class="empty-spectators-hint">No spectators watching yet</span>
+        </div>
+      </div>
+
       <!-- Real-time Lobby Activity Feed -->
       <div class="waiting-activity-box">
         <div class="waiting-activity-title">
@@ -315,6 +342,44 @@
         <button class="action-btn btn-leave" id="btn-leave-waiting-room">Leave</button>
         <button class="action-btn" id="btn-host-start-game" disabled>Start Game</button>
       </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════
+       MODAL: SPECTATE LIVE ROOM (STAGE 4)
+  ════════════════════════════════════════ -->
+  <div id="modal-spectate" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="spectate-modal-title">
+    <div class="modal-box">
+      <button class="modal-close" id="spectate-modal-close" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="spectate-modal-title">👁️ Spectate Live Room</h2>
+      <p class="online-tab-desc">Watch a waiting room or active match live without taking a player seat. Hidden hands remain private.</p>
+
+      <div class="setup-group">
+        <label class="setup-label" for="spectate-name-input">Your Display Name</label>
+        <input type="text" id="spectate-name-input" class="setup-input" placeholder="Enter your name" maxlength="16" value="Spectator" />
+      </div>
+
+      <div class="setup-group">
+        <label class="setup-label" for="spectate-room-code-input">Room Code</label>
+        <input
+          type="text"
+          id="spectate-room-code-input"
+          class="setup-input room-code-input"
+          placeholder="KZ----"
+          maxlength="12"
+          autocapitalize="characters"
+          autocomplete="off"
+          autocorrect="off"
+          spellcheck="false"
+          inputmode="text"
+        />
+      </div>
+
+      <div class="spectate-error-msg hidden" id="spectate-error-msg" role="alert"></div>
+
+      <button class="action-btn" id="btn-join-spectate" type="button">
+        <span>👁️</span> Join as Spectator
+      </button>
     </div>
   </div>
 
@@ -429,7 +494,19 @@
       </div>
       <div class="hud-status" id="hud-status">Waiting to start…</div>
 
-      <!-- Match-Only Voice Chat Controls (Hidden offline, active online) -->
+      <!-- Stage 4: Live Spectator Eye Counter (Online only) -->
+      <button class="hud-pill-btn hidden" id="btn-spectator-list" title="Live Spectators" aria-label="Live Spectators" type="button">
+        <span class="hud-pill-icon">👁️</span>
+        <span class="hud-pill-count" id="hud-spectator-count">0</span>
+      </button>
+
+      <!-- Stage 3: In-Match Chat Button (Online only) -->
+      <button class="hud-pill-btn hidden" id="btn-ingame-chat" title="In-Match Chat" aria-label="In-Match Chat" type="button">
+        <span class="hud-pill-icon">💬</span>
+        <span class="activity-badge hidden" id="ingame-chat-badge">0</span>
+      </button>
+
+      <!-- Match-Only Voice Chat Controls (Hidden offline & for spectators, active online for players) -->
       <div class="hud-voice-controls hidden" id="hud-voice-controls">
         <button class="hud-voice-btn voice-mic-btn" id="btn-voice-mic" title="Microphone (Mute/Unmute)" aria-label="Microphone" type="button">
           <span class="voice-btn-icon" id="voice-mic-icon">🎤</span>
@@ -440,6 +517,32 @@
           <span class="voice-btn-label" id="voice-speaker-label">Audio On</span>
         </button>
       </div>
+    </div>
+
+    <!-- Stage 4: Live Spectators Popover -->
+    <div class="spectator-popover hidden" id="spectator-list-popover" role="dialog" aria-label="Live Spectators">
+      <div class="spectator-popover-header">
+        <span>👁️ Live Spectators (<span id="spectator-popover-count">0</span>)</span>
+        <button class="spectator-popover-close" id="btn-close-spectator-popover" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="spectator-popover-list" id="spectator-popover-list">
+        <div class="empty-spectators-hint">No spectators watching right now.</div>
+      </div>
+    </div>
+
+    <!-- Stage 3: In-Match Chat Drawer -->
+    <div class="ingame-chat-drawer hidden" id="ingame-chat-drawer" role="dialog" aria-label="In-Match Chat">
+      <div class="ingame-chat-header">
+        <span>💬 In-Match Chat</span>
+        <button class="spectator-popover-close" id="btn-close-ingame-chat" type="button" aria-label="Close">✕</button>
+      </div>
+      <div class="ingame-chat-messages" id="ingame-chat-messages">
+        <div class="empty-chat-hint">In-match chat is fresh for this game. Say hello!</div>
+      </div>
+      <form class="lobby-chat-form ingame-chat-form" id="ingame-chat-form">
+        <input type="text" class="lobby-chat-input" id="ingame-chat-input" placeholder="Send in-match message…" maxlength="200" autocomplete="off" />
+        <button type="submit" class="lobby-chat-send-btn" id="btn-send-ingame-chat">Send</button>
+      </form>
     </div>
 
     <!-- Main Game Table -->
@@ -559,6 +662,13 @@
         </button>
         <div class="action-hint" id="action-hint">Wait for your turn</div>
       </div>
+
+      <!-- Stage 4: Spectator Bottom Bar (Hidden for players, visible for spectators) -->
+      <div class="spectator-mode-banner hidden" id="spectator-mode-banner">
+        <span class="spectator-banner-badge">👁️ SPECTATOR MODE</span>
+        <span class="spectator-banner-text">Watching live — hidden hands are private</span>
+        <button class="action-btn-sm btn-leave-spectate" id="btn-leave-spectator-table" type="button">🚪 Leave</button>
+      </div>
     </div>
 
     <!-- In-game menu backdrop overlay -->
@@ -611,9 +721,42 @@
         <!-- Rankings injected here -->
       </div>
 
+      <!-- Stage 2: Online Post-Match Ready / Not Ready Panel -->
+      <div class="post-match-online-panel hidden" id="post-match-online-panel">
+        <div class="post-match-panel-header">
+          <span class="post-match-panel-title">🤝 Rematch Readiness</span>
+          <span class="post-match-ready-summary" id="post-match-ready-summary">0 / 0 Ready</span>
+        </div>
+        <div class="post-match-ready-list" id="post-match-ready-list">
+          <!-- Per-player Ready / Not Ready rows injected by JS -->
+        </div>
+        <div class="post-match-ready-controls" id="post-match-ready-controls">
+          <button class="action-btn btn-ready-toggle" id="btn-toggle-ready" type="button" data-ready="false">
+            ⏳ Not Ready — Click to Ready Up
+          </button>
+          <p class="post-match-reason" id="post-match-reason">All previous-match players must be connected and Ready to Play Again.</p>
+        </div>
+      </div>
+
+      <!-- Stage 3: Independent Post-Match Chat (Online only: Players + Spectators) -->
+      <div class="post-match-chat-box hidden" id="post-match-chat-box">
+        <div class="lobby-chat-header">
+          <span class="lobby-chat-title">💬 Post-Match Chat</span>
+          <span class="lobby-chat-notice">Fresh chat for post-match discussion.</span>
+        </div>
+        <div class="lobby-chat-messages post-match-chat-messages" id="post-match-chat-messages">
+          <div class="empty-chat-hint">Match finished! Say GG to everyone.</div>
+        </div>
+        <form class="lobby-chat-form" id="post-match-chat-form">
+          <input type="text" class="lobby-chat-input" id="post-match-chat-input" placeholder="Send a post-match message…" maxlength="200" autocomplete="off" />
+          <button type="submit" class="lobby-chat-send-btn" id="btn-send-post-match-chat">Send</button>
+        </form>
+      </div>
+
       <div class="results-actions">
-        <button class="action-btn" id="btn-play-again">🔄 Play Again</button>
-        <button class="action-btn btn-secondary-action" id="btn-main-menu">🏠 Main Menu</button>
+        <button class="action-btn" id="btn-play-again" type="button">🔄 Play Again</button>
+        <button class="action-btn btn-create-new-room hidden" id="btn-create-new-room" type="button">➕ Create New Room</button>
+        <button class="action-btn btn-secondary-action" id="btn-main-menu" type="button">🏠 Main Menu</button>
       </div>
     </div>
   </div>

@@ -1,11 +1,12 @@
 """
 KAZHUDHAI CLUB — game_engine/room_manager.py
 Authoritative room and multiplayer session manager.
-Supports private rooms with 6-char codes, public lobbies, 2–7 players, 1–5 decks,
+Supports private rooms with 6-char codes, public lobbies, 2–10 players, 1–6 decks,
 reconnection tokens, activity history logging, real-time connection status tracking,
 and zero-leak state serialisation.
 """
 from __future__ import annotations
+import html
 import random
 import secrets
 import string
@@ -17,6 +18,30 @@ from dataclasses import dataclass, field
 from game_engine.game_state import GameState
 
 GRACE_PERIOD_SECONDS = 120.0
+MAX_CHAT_MESSAGE_LENGTH = 200
+MAX_LOBBY_CHAT_LENGTH = 150
+VALID_CHAT_STAGES = ('pre_match', 'in_match', 'post_match')
+STATUS_TO_CHAT_STAGE = {
+    'waiting':  'pre_match',
+    'playing':  'in_match',
+    'finished': 'post_match',
+}
+
+
+@dataclass
+class RoomSpectator:
+    id: str
+    name: str
+    sid: str | None
+    connected: bool = True
+    joined_at: float = field(default_factory=time.time)
+
+    def to_summary(self) -> dict:
+        return {
+            'id':        self.id,
+            'name':      self.name,
+            'connected': self.connected,
+        }
 
 
 @dataclass
@@ -46,18 +71,32 @@ class Room:
     def __init__(self, code: str, is_private: bool, max_players: int = 4, deck_count: int = 1):
         self.code = code
         self.is_private = is_private
-        self.max_players = max(2, min(7, max_players))
-        self.deck_count = max(1, min(5, deck_count))
+        self.max_players = max(2, min(10, max_players))
+        self.deck_count = max(1, min(6, deck_count))
         self.status = 'waiting'  # 'waiting', 'playing', 'finished'
+        self.match_id: str | None = None
         self.players: dict[str, RoomPlayer] = {}  # player_id -> RoomPlayer
+        self.spectators: dict[str, RoomSpectator] = {}  # spectator_id -> RoomSpectator
         self.host_id: str | None = None
         self.game_state: GameState | None = None
         self.activity_log: list[dict] = []  # Chronological game activity entries
-        self.chat_messages: list[dict] = []  # Lobby-only real-time chat messages
-        self.play_lock = threading.Lock()    # Atomic lock for turn moves and timeout handling
+        self.chat_messages: list[dict] = []  # Pre-match lobby chat (aliased in chat_stages['pre_match'])
+        self.chat_stages: dict[str, list[dict]] = {
+            'pre_match':  self.chat_messages,
+            'in_match':   [],
+            'post_match': [],
+        }
+        self.play_lock = threading.Lock()    # Atomic lock for turn moves, ready state, play-again, and timers
         self.turn_sequence: int = 0          # Monotonically increasing counter per turn
         self.turn_timer: threading.Timer | None = None
         self.turn_deadline: float | None = None
+
+        # Stage 2: Post-match Ready / Not Ready & Play Again state
+        self.last_match_player_ids: list[str] = []
+        self.last_match_deck_count: int = self.deck_count
+        self.post_match_ready: dict[str, bool] = {}
+        self.post_match_left_ids: set[str] = set()
+        self.play_again_in_progress: bool = False
 
     def cancel_turn_timer(self):
         """Cancel any pending turn timeout timer."""
@@ -117,28 +156,224 @@ class Room:
             self.activity_log.pop(0)
         return entry
 
-    def add_chat_message(self, sender_id: str, sender_name: str, text: str) -> dict:
-        """Record a chat message while in lobby."""
-        if self.status != 'waiting':
-            raise ValueError("Chat is available only in the lobby")
-        if sender_id not in self.players:
+    def clear_all_chat_stages(self):
+        """Clear all three independent chat stage histories."""
+        self.chat_messages.clear()
+        self.chat_stages['in_match'].clear()
+        self.chat_stages['post_match'].clear()
+
+    def add_stage_chat_message(self, stage: str, sender_id: str, text: str,
+                               max_length: int = MAX_CHAT_MESSAGE_LENGTH,
+                               truncate: bool = False) -> dict:
+        """
+        Record an isolated chat message for one of the three independent stages:
+        'pre_match' (waiting), 'in_match' (playing), 'post_match' (finished).
+        Allows both active players and connected spectators; spectator messages
+        receive the '[Spectator]' prefix.
+        """
+        if stage not in VALID_CHAT_STAGES:
+            raise ValueError(f"Invalid chat stage: {stage}")
+
+        expected_stage = STATUS_TO_CHAT_STAGE.get(self.status)
+        if expected_stage != stage:
+            if stage == 'pre_match':
+                raise ValueError("Chat is available only in the lobby")
+            raise ValueError(f"Chat stage '{stage}' is not active for room status '{self.status}'")
+
+        if not isinstance(text, str):
+            raise ValueError("Message must be text")
+        cleaned = text.strip()
+        if not cleaned:
+            raise ValueError("Message cannot be empty")
+        if len(cleaned) > max_length:
+            if truncate:
+                cleaned = cleaned[:max_length]
+            else:
+                raise ValueError(f"Message exceeds maximum length of {max_length} characters")
+
+        # Neutralize HTML/script injection while preserving normal readable punctuation
+        safe_text = html.escape(cleaned, quote=False)
+
+        is_spectator = False
+        if sender_id in self.players:
+            player = self.players[sender_id]
+            if not player.connected or player.status != 'connected':
+                raise ValueError("Player is not active in the room")
+            sender_name = player.name
+            display_name = player.name
+        elif sender_id in self.spectators:
+            spec = self.spectators[sender_id]
+            if not spec.connected:
+                raise ValueError("Spectator is not active in the room")
+            is_spectator = True
+            sender_name = spec.name
+            display_name = f"[Spectator] {spec.name}"
+        else:
             raise ValueError("Sender is not a member of this room")
-        player = self.players[sender_id]
-        if not player.connected or player.status != 'connected':
-            raise ValueError("Player is not active in the room")
+
         now = datetime.now()
         msg = {
-            'id':          uuid.uuid4().hex[:8],
-            'sender_id':   sender_id,
-            'sender_name': sender_name,
-            'text':        text.strip(),
-            'timestamp':   now.strftime("%I:%M %p"),
-            'iso_time':    now.isoformat(),
+            'id':           uuid.uuid4().hex[:8],
+            'room_code':    self.code,
+            'match_id':     self.match_id if stage != 'pre_match' else None,
+            'stage':        stage,
+            'sender_id':    sender_id,
+            'sender_name':  sender_name,
+            'display_name': display_name,
+            'is_spectator': is_spectator,
+            'text':         safe_text,
+            'timestamp':    now.strftime("%I:%M %p"),
+            'iso_time':     now.isoformat(),
         }
-        self.chat_messages.append(msg)
-        if len(self.chat_messages) > 100:
-            self.chat_messages.pop(0)
+        stage_list = self.chat_stages[stage]
+        stage_list.append(msg)
+        if len(stage_list) > 100:
+            stage_list.pop(0)
         return msg
+
+    def add_chat_message(self, sender_id: str, sender_name: str, text: str) -> dict:
+        """Backward-compatible helper for pre-match lobby chat."""
+        return self.add_stage_chat_message(
+            stage='pre_match',
+            sender_id=sender_id,
+            text=text,
+            max_length=MAX_LOBBY_CHAT_LENGTH,
+            truncate=True,
+        )
+
+    # ── Stage 2: Post-Match Ready / Play Again Helpers ──
+
+    def enter_post_match(self):
+        """
+        Transition room into post-match finished state:
+        - Captures exact previous-match players and deck count
+        - Resets every previous-match player's Ready status to False (Not Ready)
+        - Starts a fresh, empty post-match chat stage
+        """
+        self.status = 'finished'
+        if self.game_state:
+            self.last_match_player_ids = [p.id for p in self.game_state.players]
+            self.last_match_deck_count = self.game_state.num_decks
+        elif not self.last_match_player_ids:
+            self.last_match_player_ids = list(self.players.keys())
+            self.last_match_deck_count = self.deck_count
+
+        self.post_match_ready = {pid: False for pid in self.last_match_player_ids}
+        self.post_match_left_ids = {
+            pid for pid in self.last_match_player_ids
+            if pid not in self.players or self.players[pid].status == 'left'
+        }
+        self.play_again_in_progress = False
+
+        # Independent post-match chat begins completely empty
+        self.chat_stages['in_match'].clear()
+        self.chat_stages['post_match'].clear()
+
+    def set_player_ready(self, player_id: str, ready: bool) -> dict:
+        """Toggle a previous-match player's Ready / Not Ready status (caller holds play_lock)."""
+        if self.status != 'finished':
+            raise ValueError("Ready status can only be changed after a match finishes")
+        if player_id not in self.last_match_player_ids or player_id not in self.players:
+            raise ValueError("Only previous-match players can change ready status")
+        if player_id in self.post_match_left_ids:
+            raise ValueError("Player has already left the room")
+        player = self.players[player_id]
+        if not player.connected or player.status != 'connected':
+            raise ValueError("Player must be connected to set ready status")
+
+        self.post_match_ready[player_id] = bool(ready)
+        return self.get_post_match_status()
+
+    def can_play_again(self) -> tuple[bool, str]:
+        """
+        Strictly validate ALL 4 Play Again conditions:
+        1. Every player from the completed match is present in the original room.
+        2. Every previous-match player is connected.
+        3. Every previous-match player has selected Ready.
+        4. No new or replacement player has taken the place of a missing previous-match player.
+        """
+        if self.status != 'finished':
+            return False, "Match is not in finished state"
+        if len(self.last_match_player_ids) < 2:
+            return False, "At least 2 previous-match players are required"
+        if self.play_again_in_progress:
+            return False, "Rematch is already starting"
+
+        expected_ids = set(self.last_match_player_ids)
+        current_ids = set(self.players.keys())
+
+        if current_ids != expected_ids:
+            return False, "Room players do not match the completed match"
+        if self.post_match_left_ids:
+            return False, "A previous-match player has left the room"
+
+        for pid in self.last_match_player_ids:
+            p = self.players.get(pid)
+            if not p or p.status == 'left':
+                return False, "A previous-match player has left the room"
+            if not p.connected or p.status != 'connected':
+                return False, f"Waiting for {p.name} to reconnect"
+            if not self.post_match_ready.get(pid, False):
+                return False, f"Waiting for {p.name} to select Ready"
+
+        return True, "All players are ready to Play Again"
+
+    def get_post_match_status(self) -> dict:
+        """Return live post-match readiness state for all previous-match players."""
+        can_start, reason = self.can_play_again()
+        players_status = []
+        for pid in self.last_match_player_ids:
+            p = self.players.get(pid)
+            is_present = bool(p is not None and pid not in self.post_match_left_ids and p.status != 'left')
+            is_connected = bool(is_present and p.connected and p.status == 'connected')
+            is_ready = bool(is_connected and self.post_match_ready.get(pid, False))
+            players_status.append({
+                'id':        pid,
+                'name':      p.name if p else 'Player',
+                'present':   is_present,
+                'connected': is_connected,
+                'status':    p.status if p else 'left',
+                'ready':     is_ready,
+            })
+
+        return {
+            'room_code':      self.code,
+            'match_id':       self.match_id,
+            'deck_count':     self.last_match_deck_count,
+            'players':        players_status,
+            'can_play_again': can_start,
+            'reason':         reason,
+            'ready_count':    sum(1 for ps in players_status if ps['ready']),
+            'total_players':  len(players_status),
+        }
+
+    # ── Stage 4: Spectator Helpers ──
+
+    def add_spectator(self, name: str, sid: str | None = None) -> RoomSpectator:
+        if self.status == 'finished':
+            raise ValueError("This match has already finished and cannot accept new spectators")
+        clean_name = (name or 'Spectator').strip()[:16] or 'Spectator'
+        spec_id = f"spec_{uuid.uuid4().hex[:8]}"
+        spec = RoomSpectator(id=spec_id, name=clean_name, sid=sid, connected=True)
+        self.spectators[spec_id] = spec
+        return spec
+
+    def remove_spectator(self, spectator_id: str) -> RoomSpectator | None:
+        return self.spectators.pop(spectator_id, None)
+
+    def get_spectator_by_sid(self, sid: str) -> RoomSpectator | None:
+        for s in self.spectators.values():
+            if s.sid == sid:
+                return s
+        return None
+
+    def get_spectators_summary(self) -> dict:
+        active = [s.to_summary() for s in self.spectators.values() if s.connected]
+        return {
+            'room_code':       self.code,
+            'spectator_count': len(active),
+            'spectators':      active,
+        }
 
     def add_player(self, name: str, sid: str | None = None, is_host: bool = False) -> RoomPlayer:
         if len(self.players) >= self.max_players:
@@ -172,11 +407,15 @@ class Room:
             elif not self.players:
                 self.host_id = None
         else:
-            # During active game: keep player record marked as left
+            # During active or finished match: keep player record marked as left
             player.connected = False
             player.status = reason
             player.departure_reason = reason
             player.disconnected_at = time.time()
+            if self.status == 'finished':
+                self.post_match_ready[player_id] = False
+                if reason == 'left':
+                    self.post_match_left_ids.add(player_id)
             if self.game_state:
                 p_game = self.game_state._get_player(player_id)
                 if p_game:
@@ -197,17 +436,20 @@ class Room:
         return None
 
     def to_lobby_summary(self) -> dict:
+        active_spectators = [s.to_summary() for s in self.spectators.values() if s.connected]
         return {
-            'code':         self.code,
-            'is_private':   self.is_private,
-            'status':       self.status,
-            'max_players':  self.max_players,
-            'deck_count':   self.deck_count,
-            'player_count': len(self.players),
-            'host_id':      self.host_id,
-            'host_name':    self.host.name if self.host else 'Unknown',
-            'players':      [p.to_summary() for p in self.players.values()],
-            'activity_log': self.activity_log[::-1],  # Newest first
+            'code':            self.code,
+            'is_private':      self.is_private,
+            'status':          self.status,
+            'max_players':     self.max_players,
+            'deck_count':      self.deck_count,
+            'player_count':    len(self.players),
+            'host_id':         self.host_id,
+            'host_name':       self.host.name if self.host else 'Unknown',
+            'players':         [p.to_summary() for p in self.players.values()],
+            'spectator_count': len(active_spectators),
+            'spectators':      active_spectators,
+            'activity_log':    self.activity_log[::-1],  # Newest first
         }
 
 
@@ -251,6 +493,8 @@ class RoomManager:
             clean_token = reconnect_token.strip()
             for p in room.players.values():
                 if p.reconnect_token == clean_token:
+                    if room.status == 'finished' and p.id in room.post_match_left_ids:
+                        raise ValueError("Cannot rejoin after leaving a finished room")
                     now = time.time()
                     if p.disconnected_at is not None and (now - p.disconnected_at) > GRACE_PERIOD_SECONDS:
                         raise ValueError("Reconnection grace period (2 minutes) has expired")
@@ -259,6 +503,9 @@ class RoomManager:
                     p.status = 'connected'
                     p.departure_reason = None
                     p.disconnected_at = None
+                    if room.status == 'finished':
+                        # Must select Ready again after reconnecting
+                        room.post_match_ready[p.id] = False
                     if room.game_state:
                         p_game = room.game_state._get_player(p.id)
                         if p_game:
@@ -266,7 +513,9 @@ class RoomManager:
                     return room, p
 
         # If token is missing, invalid, or does not match:
-        # If match is already playing, reject immediately (cannot take over any slot without valid token)
+        # Reject joining active or finished rooms (prevents replacing a missing previous-match player)
+        if room.status == 'finished':
+            raise ValueError(f"Game in room '{code}' has already finished")
         if room.status != 'waiting':
             raise ValueError(f"Game in room '{code}' is already in progress")
 
@@ -309,6 +558,10 @@ class RoomManager:
                 if clean_player_id and player.id != clean_player_id:
                     return None, None
 
+                # Do not allow reconnecting to a finished room after explicitly leaving
+                if room.status == 'finished' and player.id in room.post_match_left_ids:
+                    return None, None
+
                 # Enforce 2-minute grace period if player was disconnected
                 if player.disconnected_at is not None and (now - player.disconnected_at) > GRACE_PERIOD_SECONDS:
                     return None, None
@@ -318,6 +571,9 @@ class RoomManager:
                 player.status = 'connected'
                 player.departure_reason = None
                 player.disconnected_at = None
+                if room.status == 'finished':
+                    # Reconnected previous-match player must select Ready again
+                    room.post_match_ready[player.id] = False
                 if room.game_state:
                     p_game = room.game_state._get_player(player.id)
                     if p_game:
@@ -342,6 +598,9 @@ class RoomManager:
                 player.disconnected_at = time.time()
                 player.sid = None  # Clear old socket ID so stale events cannot match
 
+                if room.status == 'finished':
+                    room.post_match_ready[player.id] = False
+
                 if room.game_state:
                     p_game = room.game_state._get_player(player.id)
                     if p_game:
@@ -364,7 +623,57 @@ class RoomManager:
         if room.status == 'waiting' and len(room.players) == 0:
             self.rooms.pop(room.code, None)
             return None
+        # If finished and all players left AND no connected spectators remain, clean up
+        if room.status == 'finished':
+            all_left = all(p.status == 'left' for p in room.players.values())
+            any_spectators = any(s.connected for s in room.spectators.values())
+            if all_left and not any_spectators:
+                self.rooms.pop(room.code, None)
+                return None
         return room
+
+    # ── Stage 4: Spectator RoomManager Operations ──
+
+    def join_as_spectator(self, room_code: str, spectator_name: str, sid: str | None = None) -> tuple[Room, RoomSpectator]:
+        code = (room_code or '').strip().upper()
+        if not code or code not in self.rooms:
+            raise ValueError(f"Room '{code}' does not exist")
+        room = self.rooms[code]
+        if room.status == 'finished':
+            raise ValueError("This match has already finished and cannot accept new spectators")
+        spec = room.add_spectator(name=spectator_name, sid=sid)
+        return room, spec
+
+    def leave_spectator(self, room_code: str, spectator_id: str) -> tuple[Room | None, RoomSpectator | None]:
+        room = self.get_room(room_code)
+        if not room:
+            return None, None
+        spec = room.remove_spectator(spectator_id)
+        if room.status == 'finished':
+            all_left = all(p.status == 'left' for p in room.players.values())
+            any_spectators = any(s.connected for s in room.spectators.values())
+            if all_left and not any_spectators:
+                self.rooms.pop(room.code, None)
+        return room, spec
+
+    def get_spectator_by_sid(self, sid: str) -> tuple[Room | None, RoomSpectator | None]:
+        for room in self.rooms.values():
+            spec = room.get_spectator_by_sid(sid)
+            if spec:
+                return room, spec
+        return None, None
+
+    def handle_spectator_disconnect(self, sid: str) -> tuple[Room | None, RoomSpectator | None]:
+        room, spec = self.get_spectator_by_sid(sid)
+        if room and spec:
+            room.remove_spectator(spec.id)
+            if room.status == 'finished':
+                all_left = all(p.status == 'left' for p in room.players.values())
+                any_spectators = any(s.connected for s in room.spectators.values())
+                if all_left and not any_spectators:
+                    self.rooms.pop(room.code, None)
+            return room, spec
+        return None, None
 
     def start_game(self, room_code: str, requester_id: str) -> Room:
         room = self.get_room(room_code)
@@ -394,9 +703,17 @@ class RoomManager:
         )
         game_state.setup()
 
-        # Clear lobby chat history when match starts (chat is disabled during gameplay)
-        room.chat_messages.clear()
+        # Generate fresh match identifier and clear all independent chat stages
+        room.match_id = uuid.uuid4().hex[:12]
+        room.clear_all_chat_stages()
         room.cancel_turn_timer()
+
+        # Reset post-match readiness state for the new match
+        room.last_match_player_ids = [p.id for p in player_list]
+        room.last_match_deck_count = room.deck_count
+        room.post_match_ready.clear()
+        room.post_match_left_ids.clear()
+        room.play_again_in_progress = False
 
         room.game_state = game_state
         room.status = 'playing'
@@ -404,7 +721,7 @@ class RoomManager:
 
     def restart_game(self, room_code: str, requester_id: str) -> Room:
         """
-        Restart the game in an existing room for a rematch.
+        Existing host-controlled Restart Game.
         Generates a completely new random shuffle and distributes cards.
         """
         room = self.get_room(room_code)
@@ -415,6 +732,60 @@ class RoomManager:
         room.game_state = None
         room.status = 'waiting'
         return self.start_game(room_code, requester_id)
+
+    def play_again(self, room_code: str, requester_id: str) -> Room:
+        """
+        Stage 2: Post-match Play Again.
+        Atomically validates all 4 readiness conditions under room.play_lock,
+        prevents concurrent restarts, keeps the exact previous-match players and
+        deck configuration, shuffles a completely fresh deck with 1 A♠, and starts
+        a new match with fresh isolated chat stages.
+        """
+        room = self.get_room(room_code)
+        if not room:
+            raise ValueError(f"Room '{room_code}' does not exist")
+
+        with room.play_lock:
+            if requester_id not in room.last_match_player_ids or requester_id not in room.players:
+                raise ValueError("Only previous-match players can trigger Play Again")
+
+            can_start, reason = room.can_play_again()
+            if not can_start:
+                raise ValueError(reason)
+
+            room.play_again_in_progress = True
+            try:
+                # Preserve exact previous-match players and deck configuration
+                room.deck_count = room.last_match_deck_count
+                player_list = [room.players[pid] for pid in room.last_match_player_ids]
+                random.shuffle(player_list)
+
+                player_configs = [
+                    {'id': p.id, 'name': p.name, 'is_ai': False}
+                    for p in player_list
+                ]
+
+                game_state = GameState(
+                    game_id=room.code,
+                    player_configs=player_configs,
+                    num_decks=room.deck_count,
+                )
+                game_state.setup()
+
+                room.match_id = uuid.uuid4().hex[:12]
+                room.clear_all_chat_stages()
+                room.cancel_turn_timer()
+
+                room.last_match_player_ids = [p.id for p in player_list]
+                room.last_match_deck_count = room.deck_count
+                room.post_match_ready.clear()
+                room.post_match_left_ids.clear()
+
+                room.game_state = game_state
+                room.status = 'playing'
+                return room
+            finally:
+                room.play_again_in_progress = False
 
     def get_public_rooms(self) -> list[dict]:
         """Returns list of active joinable public rooms."""

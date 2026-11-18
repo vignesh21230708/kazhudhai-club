@@ -43,6 +43,6 @@ class Config:
 
     # ── Game Engine Constraints ──
     MIN_PLAYERS = 2
-    MAX_PLAYERS = 7
+    MAX_PLAYERS = 10
     MIN_DECKS   = 1
-    MAX_DECKS   = 5
+    MAX_DECKS   = 6

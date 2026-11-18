@@ -76,6 +76,7 @@ const App = (() => {
   const MAIN_MENU_MODALS = [
     'modal-offline-setup',
     'modal-online-lobby',
+    'modal-spectate',
     'modal-rules',
     'modal-settings',
   ];
@@ -311,14 +312,210 @@ const App = (() => {
     return !!state.is_my_turn;
   }
 
+  // ── Stage 3: Independent Chat Stages State ──
+  let _unreadInMatchChatCount = 0;
+  let _seenInMatchMsgIds = new Set();
+  let _seenPostMatchMsgIds = new Set();
+  let _localPostMatchReady = false;
+
+  function _updateInMatchChatBadge() {
+    const badge = document.getElementById('ingame-chat-badge');
+    if (!badge) return;
+    if (_unreadInMatchChatCount > 0) {
+      badge.textContent = String(_unreadInMatchChatCount > 99 ? '99+' : _unreadInMatchChatCount);
+      badge.classList.remove('hidden');
+    } else {
+      badge.classList.add('hidden');
+    }
+  }
+
+  function toggleInMatchChat() {
+    const drawer = document.getElementById('ingame-chat-drawer');
+    if (!drawer) return;
+    const willOpen = drawer.classList.contains('hidden');
+    drawer.classList.toggle('hidden');
+    if (willOpen) {
+      _unreadInMatchChatCount = 0;
+      _updateInMatchChatBadge();
+      const input = document.getElementById('ingame-chat-input');
+      if (input) input.focus();
+    }
+  }
+
+  function closeInMatchChat() {
+    const drawer = document.getElementById('ingame-chat-drawer');
+    if (drawer) drawer.classList.add('hidden');
+  }
+
+  function _clearStageChatUI(stage) {
+    if (stage === 'in_match') {
+      _seenInMatchMsgIds.clear();
+      _unreadInMatchChatCount = 0;
+      _updateInMatchChatBadge();
+      const list = document.getElementById('ingame-chat-messages');
+      if (list) list.innerHTML = '<div class="empty-chat-hint">In-match chat is fresh for this game. Say hello!</div>';
+      const input = document.getElementById('ingame-chat-input');
+      if (input) input.value = '';
+    } else if (stage === 'post_match') {
+      _seenPostMatchMsgIds.clear();
+      const list = document.getElementById('post-match-chat-messages');
+      if (list) list.innerHTML = '<div class="empty-chat-hint">Match finished! Say GG to everyone.</div>';
+      const input = document.getElementById('post-match-chat-input');
+      if (input) input.value = '';
+    }
+  }
+
+  function clearStageChatsOnMatchStart() {
+    closeInMatchChat();
+    _clearStageChatUI('in_match');
+    _clearStageChatUI('post_match');
+    _localPostMatchReady = false;
+  }
+
+  function _appendChatItem(listEl, msg, mySenderId) {
+    if (!listEl || !msg) return;
+    const hint = listEl.querySelector('.empty-chat-hint');
+    if (hint) hint.remove();
+
+    const isSelf = !!(mySenderId && msg.sender_id === mySenderId);
+    const isSpec = !!msg.is_spectator;
+    const displayLabel = msg.display_name || (isSpec ? `[Spectator] ${msg.sender_name}` : msg.sender_name);
+
+    const item = document.createElement('div');
+    item.className = `lobby-chat-msg${isSelf ? ' is-self' : ''}${isSpec ? ' is-spectator' : ''}`;
+
+    const senderSpan = document.createElement('span');
+    senderSpan.className = 'lobby-chat-sender';
+    senderSpan.textContent = isSelf ? `${displayLabel} (You):` : `${displayLabel}:`;
+
+    const textSpan = document.createElement('span');
+    textSpan.className = 'lobby-chat-text';
+    textSpan.textContent = msg.text || '';
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'lobby-chat-time';
+    timeSpan.textContent = msg.timestamp || '';
+
+    item.appendChild(senderSpan);
+    item.appendChild(textSpan);
+    item.appendChild(timeSpan);
+
+    listEl.appendChild(item);
+    listEl.scrollTop = listEl.scrollHeight;
+  }
+
+  function handleStageChatMessage(msg) {
+    if (!msg || !msg.stage) return;
+    // Strict room isolation on client as well as server
+    const currentRoom = (typeof OnlineClient !== 'undefined' && OnlineClient.getRoomCode) ? OnlineClient.getRoomCode() : null;
+    if (currentRoom && msg.room_code && msg.room_code !== currentRoom) return;
+
+    const mySenderId = (typeof OnlineClient !== 'undefined' && OnlineClient.getCurrentSenderId)
+      ? OnlineClient.getCurrentSenderId()
+      : null;
+
+    if (msg.stage === 'pre_match') {
+      if (typeof MenuUI !== 'undefined' && MenuUI.addLobbyChatMessage) {
+        MenuUI.addLobbyChatMessage(msg, mySenderId);
+      }
+      return;
+    }
+
+    if (msg.stage === 'in_match') {
+      if (msg.id && _seenInMatchMsgIds.has(msg.id)) return;
+      if (msg.id) _seenInMatchMsgIds.add(msg.id);
+      const listEl = document.getElementById('ingame-chat-messages');
+      _appendChatItem(listEl, msg, mySenderId);
+      const drawer = document.getElementById('ingame-chat-drawer');
+      if (drawer && drawer.classList.contains('hidden')) {
+        _unreadInMatchChatCount++;
+        _updateInMatchChatBadge();
+      }
+      return;
+    }
+
+    if (msg.stage === 'post_match') {
+      if (msg.id && _seenPostMatchMsgIds.has(msg.id)) return;
+      if (msg.id) _seenPostMatchMsgIds.add(msg.id);
+      const listEl = document.getElementById('post-match-chat-messages');
+      _appendChatItem(listEl, msg, mySenderId);
+    }
+  }
+
+  function _bindStageChatAndPostMatchControls() {
+    const closeIngameChatBtn = document.getElementById('btn-close-ingame-chat');
+    if (closeIngameChatBtn) {
+      closeIngameChatBtn.addEventListener('click', () => closeInMatchChat());
+    }
+
+    const ingameForm = document.getElementById('ingame-chat-form');
+    const ingameInput = document.getElementById('ingame-chat-input');
+    if (ingameForm && ingameInput) {
+      ingameForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = ingameInput.value.trim();
+        if (!text) return;
+        OnlineClient.sendStageChatMessage('in_match', text, (res) => {
+          if (res && !res.success) {
+            showToast(res.message || 'Failed to send message', 'error', 2000);
+          }
+        });
+        ingameInput.value = '';
+      });
+    }
+
+    const postForm = document.getElementById('post-match-chat-form');
+    const postInput = document.getElementById('post-match-chat-input');
+    if (postForm && postInput) {
+      postForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const text = postInput.value.trim();
+        if (!text) return;
+        OnlineClient.sendStageChatMessage('post_match', text, (res) => {
+          if (res && !res.success) {
+            showToast(res.message || 'Failed to send message', 'error', 2000);
+          }
+        });
+        postInput.value = '';
+      });
+    }
+
+    const toggleReadyBtn = document.getElementById('btn-toggle-ready');
+    if (toggleReadyBtn) {
+      toggleReadyBtn.addEventListener('click', () => {
+        if (_isOffline || OnlineClient.isSpectator()) return;
+        Sound.click();
+        const nextReady = !_localPostMatchReady;
+        toggleReadyBtn.disabled = true;
+        OnlineClient.setPostMatchReady(nextReady, (res) => {
+          toggleReadyBtn.disabled = false;
+          if (res && res.success && res.post_match_status) {
+            handlePostMatchStatus(res.post_match_status);
+          } else if (res && !res.success) {
+            showToast(res.message || 'Could not update Ready status', 'error', 2500);
+          }
+        });
+      });
+    }
+
+    const createNewRoomBtn = document.getElementById('btn-create-new-room');
+    if (createNewRoomBtn) {
+      createNewRoomBtn.addEventListener('click', () => {
+        Sound.click();
+        handleCreateNewRoom();
+      });
+    }
+  }
+
   function init() {
     Screens.go('screen-menu');
     MenuUI.init();
+    _bindStageChatAndPostMatchControls();
     if (!_backNavBound && typeof window !== 'undefined') {
       window.addEventListener('popstate', _handlePopState);
       _backNavBound = true;
     }
-    console.log('[KAZHUDHAI CLUB] Stage 3 Active: Core round gameplay online.');
+    console.log('[KAZHUDHAI CLUB] Integrated Stages 1–5 Active.');
 
     // Check saved active session during startup for seamless Android APK / browser reload recovery
     _checkActiveSessionOnStartup();
@@ -431,6 +628,13 @@ const App = (() => {
         deckCount:  config.deckCount,
         playerName: config.playerName,
       });
+      if (typeof TableUI.setSpectatorMode === 'function') {
+        TableUI.setSpectatorMode(false);
+      }
+      if (typeof TableUI.setOnlineControlsVisible === 'function') {
+        TableUI.setOnlineControlsVisible(false, false);
+      }
+      closeInMatchChat();
 
       _renderActivityLog([
         {
@@ -456,6 +660,9 @@ const App = (() => {
   }
 
   async function playCard(cardId) {
+    if (!_isOffline && typeof OnlineClient !== 'undefined' && OnlineClient.isSpectator && OnlineClient.isSpectator()) {
+      return;
+    }
     if (!cardId || !GameClient.isActive()) {
       if (typeof TableUI !== 'undefined' && TableUI.resetPlayInFlight) {
         TableUI.resetPlayInFlight();
@@ -671,8 +878,11 @@ const App = (() => {
       TableUI.setStatus(`Waiting for ${currentName} to play…`);
     }
 
-    // Common pile
+    // Common pile & deck count HUD
     TableUI.updateCommonPile(state.common_pile_count || 0);
+    if (state.deck_count && typeof TableUI.updateDeckCount === 'function') {
+      TableUI.updateDeckCount(state.deck_count);
+    }
 
     // Synchronize played cards on the table
     // When not in mid-resolution pause, strictly show cards for the active round:
@@ -717,6 +927,12 @@ const App = (() => {
     if (typeof TableUI !== 'undefined' && TableUI.hideExitConfirm) {
       TableUI.hideExitConfirm();
     }
+    // Stage 3: Independent post-match chat starts completely fresh
+    closeInMatchChat();
+    _clearStageChatUI('in_match');
+    _clearStageChatUI('post_match');
+    _localPostMatchReady = false;
+
     Screens.go('screen-results');
     _releaseGameBackGuard();
 
@@ -730,30 +946,194 @@ const App = (() => {
       const row = document.createElement('div');
       row.className = 'rank-row-item';
       const isKazhudhai = player.is_kazhudhai;
-      row.innerHTML = `
-        <span class="rank-position">${i + 1}</span>
-        <span class="rank-name">${player.name}</span>
-        <span class="rank-badge ${isKazhudhai ? 'kazhudhai' : 'safe'}">
-          ${isKazhudhai ? '👑 KAZHUDHAI' : '✅ Safe'}
-        </span>
-      `;
+
+      const posSpan = document.createElement('span');
+      posSpan.className = 'rank-position';
+      posSpan.textContent = String(i + 1);
+
+      const nameSpan = document.createElement('span');
+      nameSpan.className = 'rank-name';
+      nameSpan.textContent = player.name || 'Player';
+
+      const badgeSpan = document.createElement('span');
+      badgeSpan.className = `rank-badge ${isKazhudhai ? 'kazhudhai' : 'safe'}`;
+      badgeSpan.textContent = isKazhudhai ? '👑 KAZHUDHAI' : '✅ Safe';
+
+      row.appendChild(posSpan);
+      row.appendChild(nameSpan);
+      row.appendChild(badgeSpan);
       rankings.appendChild(row);
     });
 
     Sound.kazhudhai();
     Animations.confettiCelebration();
 
-    document.getElementById('btn-play-again').onclick = () => {
-      if (_isOffline) {
-        startOfflineGame(_currentConfig);
-      } else {
-        exitToMenu();
+    const postPanel       = document.getElementById('post-match-online-panel');
+    const postChatBox     = document.getElementById('post-match-chat-box');
+    const playAgainBtn    = document.getElementById('btn-play-again');
+    const createNewBtn    = document.getElementById('btn-create-new-room');
+    const toggleReadyBtn  = document.getElementById('btn-toggle-ready');
+    const mainMenuBtn     = document.getElementById('btn-main-menu');
+
+    if (_isOffline) {
+      if (postPanel) postPanel.classList.add('hidden');
+      if (postChatBox) postChatBox.classList.add('hidden');
+      if (createNewBtn) createNewBtn.classList.add('hidden');
+      if (playAgainBtn) {
+        playAgainBtn.classList.remove('hidden');
+        playAgainBtn.disabled = false;
+        playAgainBtn.onclick = () => startOfflineGame(_currentConfig);
       }
-    };
-    document.getElementById('btn-main-menu').onclick  = exitToMenu;
+    } else {
+      const isSpec = !!(typeof OnlineClient !== 'undefined' && OnlineClient.isSpectator && OnlineClient.isSpectator());
+      if (postPanel) postPanel.classList.remove('hidden');
+      if (postChatBox) postChatBox.classList.remove('hidden');
+      if (createNewBtn) {
+        // Stage 2.3: Create New Room is ALWAYS available and enabled
+        createNewBtn.classList.remove('hidden');
+        createNewBtn.disabled = false;
+      }
+      if (toggleReadyBtn) {
+        toggleReadyBtn.classList.toggle('hidden', isSpec);
+        toggleReadyBtn.dataset.ready = 'false';
+        toggleReadyBtn.textContent = '⏳ Not Ready — Click to Ready Up';
+        toggleReadyBtn.classList.remove('is-ready');
+      }
+      if (playAgainBtn) {
+        if (isSpec) {
+          playAgainBtn.classList.add('hidden');
+          playAgainBtn.disabled = true;
+          playAgainBtn.onclick = null;
+        } else {
+          playAgainBtn.classList.remove('hidden');
+          playAgainBtn.disabled = true;
+          playAgainBtn.onclick = () => {
+            if (playAgainBtn.disabled) return;
+            Sound.click();
+            OnlineClient.playAgain();
+          };
+        }
+      }
+
+      const initialStatus = state.post_match_status || (typeof OnlineClient !== 'undefined' && OnlineClient.getPostMatchStatus ? OnlineClient.getPostMatchStatus() : null);
+      if (initialStatus) {
+        handlePostMatchStatus(initialStatus);
+      }
+    }
+
+    if (mainMenuBtn) {
+      mainMenuBtn.onclick = exitToMenu;
+    }
   }
 
-  // ─── Online Game Flow ───
+  /**
+   * Stage 2: Live update post-match Ready / Not Ready status and Play Again button state.
+   */
+  function handlePostMatchStatus(status) {
+    if (!status) return;
+    const isSpec = !!(typeof OnlineClient !== 'undefined' && OnlineClient.isSpectator && OnlineClient.isSpectator());
+    const myId = (typeof OnlineClient !== 'undefined' && OnlineClient.getPlayerId) ? OnlineClient.getPlayerId() : null;
+
+    const summaryEl = document.getElementById('post-match-ready-summary');
+    if (summaryEl) {
+      summaryEl.textContent = `${status.ready_count || 0} / ${status.total_players || 0} Ready`;
+    }
+
+    const listEl = document.getElementById('post-match-ready-list');
+    if (listEl && Array.isArray(status.players)) {
+      listEl.innerHTML = '';
+      status.players.forEach(p => {
+        const row = document.createElement('div');
+        row.className = `post-match-ready-row${p.ready ? ' is-ready' : ''}${!p.present ? ' is-left' : ''}`;
+
+        const nameWrap = document.createElement('span');
+        nameWrap.className = 'post-match-player-name';
+        const dot = document.createElement('span');
+        dot.className = `player-status-dot status-${p.connected ? 'connected' : (p.present ? 'disconnected' : 'left')}`;
+        const nameText = document.createElement('span');
+        nameText.textContent = (myId && p.id === myId) ? `${p.name} (You)` : p.name;
+        nameWrap.appendChild(dot);
+        nameWrap.appendChild(nameText);
+
+        const stateBadge = document.createElement('span');
+        stateBadge.className = `ready-status-badge ${p.ready ? 'badge-ready' : (!p.present ? 'badge-left' : (!p.connected ? 'badge-disconnected' : 'badge-not-ready'))}`;
+        stateBadge.textContent = p.ready ? '✅ Ready' : (!p.present ? '🚪 Left' : (!p.connected ? '🔴 Disconnected' : '⏳ Not Ready'));
+
+        row.appendChild(nameWrap);
+        row.appendChild(stateBadge);
+        listEl.appendChild(row);
+
+        if (!isSpec && myId && p.id === myId) {
+          _localPostMatchReady = !!p.ready;
+        }
+      });
+    }
+
+    const toggleBtn = document.getElementById('btn-toggle-ready');
+    if (toggleBtn && !isSpec) {
+      toggleBtn.dataset.ready = _localPostMatchReady ? 'true' : 'false';
+      toggleBtn.classList.toggle('is-ready', _localPostMatchReady);
+      toggleBtn.textContent = _localPostMatchReady
+        ? '✅ Ready — Click to Switch to Not Ready'
+        : '⏳ Not Ready — Click to Ready Up';
+    }
+
+    const reasonEl = document.getElementById('post-match-reason');
+    if (reasonEl) {
+      reasonEl.textContent = isSpec
+        ? '👁️ Spectating post-match lobby. You can chat or create a new room.'
+        : (status.reason || '');
+    }
+
+    const playAgainBtn = document.getElementById('btn-play-again');
+    if (playAgainBtn && !_isOffline && !isSpec) {
+      playAgainBtn.disabled = !status.can_play_again;
+    }
+
+    // Create New Room is ALWAYS enabled regardless of readiness or departures
+    const createNewBtn = document.getElementById('btn-create-new-room');
+    if (createNewBtn && !_isOffline) {
+      createNewBtn.disabled = false;
+    }
+  }
+
+  /**
+   * Stage 2.3: Cleanly leave old room, clear old session references,
+   * and open the exact existing Main Menu -> Play Online -> Create Private Room workflow.
+   */
+  function handleCreateNewRoom() {
+    _clearAiTimeout();
+    _clearRoundTimer();
+    _isRoundPaused = false;
+    _pendingNextState = null;
+    _localPostMatchReady = false;
+    closeInMatchChat();
+    _clearStageChatUI('in_match');
+    _clearStageChatUI('post_match');
+
+    if (typeof TableUI !== 'undefined' && TableUI.updateTurnTimer) {
+      TableUI.updateTurnTimer(null);
+    }
+    if (typeof TableUI !== 'undefined' && TableUI.setSpectatorMode) {
+      TableUI.setSpectatorMode(false);
+    }
+    if (typeof VoiceClient !== 'undefined' && VoiceClient.leaveVoice) {
+      VoiceClient.leaveVoice();
+    }
+
+    // Cleanly leave the old room without requiring permission from other players
+    OnlineClient.leaveRoom('left');
+    OfflineClient.reset();
+    GameClient.reset();
+    _releaseGameBackGuard();
+
+    Screens.go('screen-menu');
+    if (typeof MenuUI !== 'undefined' && MenuUI.openCreatePrivateRoomWorkflow) {
+      MenuUI.openCreatePrivateRoomWorkflow();
+    }
+  }
+
+  // ─── Online Game & Spectator Flow ───
 
   function createOnlineRoom(config, callback) {
     _isOffline = false;
@@ -765,11 +1145,76 @@ const App = (() => {
     OnlineClient.joinRoom(config, callback);
   }
 
+  function joinAsSpectator(config, callback) {
+    _isOffline = false;
+    OnlineClient.joinAsSpectator(config, callback);
+  }
+
+  function handleSpectatorsUpdated(summary) {
+    if (!summary) return;
+    if (typeof TableUI !== 'undefined' && TableUI.updateSpectatorList) {
+      TableUI.updateSpectatorList(summary.spectators || [], summary.spectator_count || 0);
+    }
+  }
+
+  /**
+   * Stage 4: Render server-sanitized live spectator table state.
+   */
+  function renderSpectatorState(state) {
+    if (!state) return;
+    _isOffline = false;
+    GameClient.setState(state);
+
+    if (typeof TableUI.setSpectatorMode === 'function') {
+      TableUI.setSpectatorMode(true);
+    }
+    if (typeof TableUI.setOnlineControlsVisible === 'function') {
+      TableUI.setOnlineControlsVisible(true, true);
+    }
+    if (state.deck_count && typeof TableUI.updateDeckCount === 'function') {
+      TableUI.updateDeckCount(state.deck_count);
+    }
+    if (typeof state.spectator_count === 'number' && typeof TableUI.updateSpectatorList === 'function') {
+      TableUI.updateSpectatorList(state.spectators || [], state.spectator_count);
+    }
+
+    if (typeof TableUI.renderSpectatorPlayers === 'function') {
+      TableUI.renderSpectatorPlayers(state.players || []);
+    }
+
+    const currentPlayer = (state.players || []).find(p => p.id === state.current_player_id);
+    const currentName = currentPlayer ? currentPlayer.name : 'Player';
+    TableUI.setTurn(`${currentName}'s`, false);
+    TableUI.setStatus(`👁️ Spectating · ${currentName}'s turn`);
+
+    if (typeof TableUI.updateTurnTimer === 'function') {
+      TableUI.updateTurnTimer(state.turn_deadline, state.turn_duration || 30);
+    }
+
+    TableUI.updateCommonPile(state.common_pile_count || 0);
+
+    if (!_isRoundPaused && typeof TableUI.syncPlayedCards === 'function') {
+      TableUI.syncPlayedCards(state.played_cards || []);
+    }
+
+    if (state.is_attack && state.attacker_name) {
+      TableUI.showAttackBanner(state.attacker_name);
+    } else if (!state.is_attack && !_isRoundPaused) {
+      TableUI.hideAttackBanner();
+    }
+  }
+
   function renderOnlineState(state) {
     _isOffline = false;
     GameClient.setState(state);
     if (state.activity_log) {
       _renderActivityLog(state.activity_log);
+    }
+    if (typeof state.spectator_count === 'number' && typeof TableUI.updateSpectatorList === 'function') {
+      TableUI.updateSpectatorList(state.spectators || [], state.spectator_count);
+    }
+    if (typeof TableUI.setOnlineControlsVisible === 'function') {
+      TableUI.setOnlineControlsVisible(true, false);
     }
 
     // If currently paused in round resolution animation, do NOT destroy the timer!
@@ -919,6 +1364,16 @@ const App = (() => {
     if (typeof TableUI !== 'undefined' && TableUI.closeInGameMenu) {
       TableUI.closeInGameMenu();
     }
+    if (typeof TableUI !== 'undefined' && TableUI.setSpectatorMode) {
+      TableUI.setSpectatorMode(false);
+    }
+    if (typeof TableUI !== 'undefined' && TableUI.setOnlineControlsVisible) {
+      TableUI.setOnlineControlsVisible(false, false);
+    }
+    closeInMatchChat();
+    _clearStageChatUI('in_match');
+    _clearStageChatUI('post_match');
+    _localPostMatchReady = false;
     closeActivityDrawer();
     _unreadActivityCount = 0;
     _updateActivityBadge();
@@ -940,6 +1395,7 @@ const App = (() => {
   function sendReaction(emoji) {
     if (!emoji) return;
     if (!_isOffline) {
+      if (typeof OnlineClient !== 'undefined' && OnlineClient.isSpectator && OnlineClient.isSpectator()) return;
       OnlineClient.sendReaction(emoji);
     } else {
       TableUI.showPlayerReaction('human', emoji);
@@ -959,7 +1415,16 @@ const App = (() => {
     isCurrentPlayerTurn,
     createOnlineRoom,
     joinOnlineRoom,
+    joinAsSpectator,
     renderOnlineState,
+    renderSpectatorState,
+    handleSpectatorsUpdated,
+    handlePostMatchStatus,
+    handleCreateNewRoom,
+    handleStageChatMessage,
+    clearStageChatsOnMatchStart,
+    toggleInMatchChat,
+    closeInMatchChat,
     handleOnlineCardPlayed,
     handleOnlineRoundResolution,
     handlePlayerDeparture,

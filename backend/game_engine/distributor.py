@@ -3,7 +3,7 @@ KAZHUDHAI CLUB — game_engine/distributor.py
 Card distribution logic adhering strictly to the official game rules.
 
 Rules:
-  1. Minimum 2 players, Maximum 7 players.
+  1. Minimum 2 players, Maximum 10 players.
   2. Distribute cards equally among all players first (base share = total // num_players).
   3. Distribute remaining cards one by one (remainder = total % num_players).
   4. Start giving remaining cards from Player 1 (index 0).
@@ -32,8 +32,8 @@ def calculate_expected_distribution(num_decks: int, num_players: int) -> list[in
     Example for 3 decks (154 cards) and 5 players:
       returns [31, 31, 31, 31, 30]
     """
-    if num_players < 2 or num_players > 7:
-        raise ValueError(f"num_players must be 2-7, got {num_players}")
+    if num_players < 2 or num_players > 10:
+        raise ValueError(f"num_players must be 2-10, got {num_players}")
 
     total = expected_card_count(num_decks)
     base = total // num_players
@@ -49,18 +49,18 @@ def calculate_expected_distribution(num_decks: int, num_players: int) -> list[in
 def distribute(cards: list[dict], num_players: int, sort_hands: bool = False) -> list[list[dict]]:
     """
     Distribute cards from the shuffled deck among joined players according to the rules:
-      1. Minimum 2 players, Maximum 7 players.
+      1. Minimum 2 players, Maximum 10 players.
       2. Distribute cards as equally as possible (base share = total // num_players).
       3. Distribute remaining cards one by one starting from Player 1 (index 0) in player order.
       4. Preserves the random shuffled order during distribution without sorting.
 
     :param cards: List of card dicts (shuffled before distribution).
-    :param num_players: Number of joined players (2 to 7).
+    :param num_players: Number of joined players (2 to 10).
     :param sort_hands: Default False. If False, preserves the exact random dealing order.
     :returns: List of hands (list of lists of cards), index 0 = Player 1.
     """
-    if num_players < 2 or num_players > 7:
-        raise ValueError(f"num_players must be 2-7, got {num_players}")
+    if num_players < 2 or num_players > 10:
+        raise ValueError(f"num_players must be 2-10, got {num_players}")
 
     total = len(cards)
     base = total // num_players

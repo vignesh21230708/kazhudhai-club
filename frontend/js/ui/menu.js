@@ -12,6 +12,7 @@ const MenuUI = (() => {
     _bindMainMenu();
     _bindOfflineSetup();
     _bindOnlineLobby();
+    _bindSpectateModal();
     _bindWaitingRoom();
     _bindRules();
     _bindSettings();
@@ -33,6 +34,26 @@ const MenuUI = (() => {
       }
       showModal('modal-online-lobby');
     });
+
+    const spectateBtn = document.getElementById('btn-spectate-menu');
+    if (spectateBtn) {
+      spectateBtn.addEventListener('click', () => {
+        Sound.unlock(); Sound.click();
+        if (typeof OnlineClient !== 'undefined' && OnlineClient.initConnection) {
+          OnlineClient.initConnection();
+        }
+        const errEl = document.getElementById('spectate-error-msg');
+        if (errEl) {
+          errEl.textContent = '';
+          errEl.classList.add('hidden');
+        }
+        const nameEl = document.getElementById('spectate-name-input');
+        if (nameEl && !nameEl.value.trim()) {
+          nameEl.value = Storage.getPlayerName() || 'Spectator';
+        }
+        showModal('modal-spectate');
+      });
+    }
 
     document.getElementById('btn-rules').addEventListener('click', () => {
       Sound.click();
@@ -212,7 +233,8 @@ const MenuUI = (() => {
 
     function doJoinPrivateRoom() {
       const name = document.getElementById('online-player-name').value.trim() || 'Player';
-      const code = (roomInput.value || '').trim().toUpperCase();
+      const code = (roomInput.value || '').replace(/\s+/g, '').toUpperCase();
+      roomInput.value = code;
 
       if (code.length < 4) {
         showToast('Please enter a valid room code (e.g. KZ1234)', 'error');
@@ -245,9 +267,9 @@ const MenuUI = (() => {
           doJoinPrivateRoom();
         }
       });
-      // Normalize to uppercase on blur without disturbing mobile IME typing
+      // Normalize pasted/typed code cleanly without breaking mobile IME typing
       roomInput.addEventListener('blur', () => {
-        roomInput.value = roomInput.value.trim().toUpperCase();
+        roomInput.value = roomInput.value.replace(/\s+/g, '').toUpperCase().slice(0, 6);
       });
     }
 
@@ -418,6 +440,8 @@ const MenuUI = (() => {
     const savedName = Storage.getPlayerName();
     document.getElementById('offline-player-name').value = savedName;
     document.getElementById('online-player-name').value  = savedName;
+    const specNameEl = document.getElementById('spectate-name-input');
+    if (specNameEl) specNameEl.value = savedName || 'Spectator';
 
     // Restore last selections
     offlineSetup.playerCount = Storage.getLastPlayerCount();
@@ -439,7 +463,120 @@ const MenuUI = (() => {
     });
   }
 
+  // ── Stage 4: Spectate Modal ──
+  function _bindSpectateModal() {
+    const closeBtn = document.getElementById('spectate-modal-close');
+    const overlay  = document.getElementById('modal-spectate');
+    if (closeBtn) closeBtn.addEventListener('click', () => hideModal('modal-spectate'));
+    if (overlay) {
+      overlay.addEventListener('click', (e) => {
+        if (e.target === e.currentTarget) hideModal('modal-spectate');
+      });
+    }
+
+    const joinBtn   = document.getElementById('btn-join-spectate');
+    const codeInput = document.getElementById('spectate-room-code-input');
+    const nameInput = document.getElementById('spectate-name-input');
+    const errEl     = document.getElementById('spectate-error-msg');
+
+    function showSpecError(msg) {
+      if (errEl) {
+        errEl.textContent = msg;
+        errEl.classList.remove('hidden');
+      }
+      showToast(msg, 'error', 3000);
+    }
+
+    function clearSpecError() {
+      if (errEl) {
+        errEl.textContent = '';
+        errEl.classList.add('hidden');
+      }
+    }
+
+    function doJoinSpectate() {
+      clearSpecError();
+      const name = (nameInput ? nameInput.value : '').trim() || 'Spectator';
+      const code = (codeInput ? codeInput.value : '').replace(/\s+/g, '').toUpperCase();
+      if (codeInput) codeInput.value = code;
+
+      if (code.length < 4) {
+        showSpecError('Please enter a valid room code (e.g. KZ1234)');
+        if (codeInput) {
+          Animations.shake(codeInput);
+          codeInput.focus();
+        }
+        return;
+      }
+
+      Storage.savePlayerName(name);
+      Sound.click();
+
+      const origHTML = joinBtn ? joinBtn.innerHTML : '';
+      if (joinBtn) {
+        joinBtn.disabled = true;
+        joinBtn.innerHTML = '<span>⏳</span> Joining as Spectator…';
+      }
+
+      App.joinAsSpectator({ roomCode: code, spectatorName: name }, (res) => {
+        if (joinBtn) {
+          joinBtn.disabled = false;
+          joinBtn.innerHTML = origHTML;
+        }
+        if (res && !res.success) {
+          showSpecError(res.message || 'Room not found or unavailable for spectating');
+        } else if (codeInput) {
+          codeInput.value = '';
+        }
+      });
+    }
+
+    if (joinBtn) {
+      joinBtn.addEventListener('click', doJoinSpectate);
+    }
+    if (codeInput) {
+      codeInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          doJoinSpectate();
+        }
+      });
+      codeInput.addEventListener('blur', () => {
+        codeInput.value = codeInput.value.replace(/\s+/g, '').toUpperCase().slice(0, 6);
+      });
+    }
+  }
+
+  /**
+   * Stage 2: Open the exact existing Main Menu -> Play Online -> Create Private Room workflow
+   * with fresh default settings (no previous match players or decks carried over).
+   */
+  function openCreatePrivateRoomWorkflow() {
+    onlinePrivateSetup = { playerCount: 4, deckCount: 1 };
+    _restoreSelector('online-private-players', '4');
+    _restoreSelector('online-private-decks', '1');
+    const hint = document.getElementById('online-deck-card-count');
+    if (hint) hint.textContent = '1 deck = 52 cards (Single A♠)';
+
+    // Activate "Create Private Room" tab
+    document.querySelectorAll('.online-tab-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.tab === 'tab-create-private');
+    });
+    document.querySelectorAll('.online-tab-pane').forEach(p => {
+      const isCreatePriv = p.id === 'tab-create-private';
+      p.classList.toggle('active', isCreatePriv);
+      p.classList.toggle('hidden', !isCreatePriv);
+    });
+
+    if (typeof OnlineClient !== 'undefined' && OnlineClient.initConnection) {
+      OnlineClient.initConnection();
+    }
+    showModal('modal-online-lobby');
+  }
+
   // ── Waiting Room / Lobby Modal ──
+  let _seenLobbyMsgIds = new Set();
+
   function _bindWaitingRoom() {
     const copyBtn = document.getElementById('btn-copy-room-code');
     if (copyBtn) {
@@ -491,16 +628,16 @@ const MenuUI = (() => {
     }
   }
 
-  function showWaitingRoom(roomSummary, myPlayerId) {
+  function showWaitingRoom(roomSummary, myPlayerId, isSpectator = false) {
     showModal('modal-room-waiting');
-    updateWaitingRoom(roomSummary, myPlayerId);
+    updateWaitingRoom(roomSummary, myPlayerId, isSpectator);
   }
 
   function hideWaitingRoom() {
     hideModal('modal-room-waiting');
   }
 
-  function updateWaitingRoom(roomSummary, myPlayerId) {
+  function updateWaitingRoom(roomSummary, myPlayerId, isSpectator = false) {
     if (!roomSummary) return;
 
     // Room code
@@ -510,7 +647,8 @@ const MenuUI = (() => {
     // Badge
     const badgeEl = document.getElementById('waiting-room-badge');
     if (badgeEl) {
-      badgeEl.textContent = roomSummary.is_private ? '🔒 Private Room' : '🌍 Public Room';
+      const roleTag = isSpectator ? ' · 👁️ Spectating' : '';
+      badgeEl.textContent = (roomSummary.is_private ? '🔒 Private Room' : '🌍 Public Room') + roleTag;
       badgeEl.className = `room-badge ${roomSummary.is_private ? 'private' : 'public'}`;
     }
 
@@ -527,25 +665,61 @@ const MenuUI = (() => {
       deckEl.textContent = `${roomSummary.deck_count} Deck${roomSummary.deck_count > 1 ? 's' : ''} (${totalCards} cards)`;
     }
 
+    // Stage 4: Live spectators list in waiting room
+    const specCountEl = document.getElementById('waiting-spectator-count');
+    const specNamesEl = document.getElementById('waiting-spectator-names');
+    const specList = Array.isArray(roomSummary.spectators) ? roomSummary.spectators : [];
+    const specCount = typeof roomSummary.spectator_count === 'number' ? roomSummary.spectator_count : specList.length;
+    if (specCountEl) specCountEl.textContent = String(specCount);
+    if (specNamesEl) {
+      specNamesEl.innerHTML = '';
+      if (specList.length === 0) {
+        const hint = document.createElement('span');
+        hint.className = 'empty-spectators-hint';
+        hint.textContent = 'No spectators watching yet';
+        specNamesEl.appendChild(hint);
+      } else {
+        specList.forEach(s => {
+          const pill = document.createElement('span');
+          pill.className = 'waiting-spectator-pill';
+          pill.textContent = `👁️ ${s.name}`;
+          specNamesEl.appendChild(pill);
+        });
+      }
+    }
+
     // Render players
     const gridEl = document.getElementById('waiting-players-grid');
     if (gridEl && roomSummary.players) {
       gridEl.innerHTML = '';
-      roomSummary.players.forEach((p, idx) => {
+      roomSummary.players.forEach((p) => {
         const card = document.createElement('div');
-        const isSelf = p.id === myPlayerId;
+        const isSelf = !isSpectator && (p.id === myPlayerId);
         const status = p.status || (p.connected ? 'connected' : 'disconnected');
         const badgeText = p.is_host ? 'Host' : (status === 'connected' ? 'Ready' : (status === 'reconnecting' ? 'Reconnecting' : 'Left'));
         card.className = `waiting-player-card ${isSelf ? 'is-self' : ''}`;
         card.dataset.playerId = p.id;
-        card.innerHTML = `
-          <div class="waiting-player-avatar">${p.is_host ? '👑' : '👤'}</div>
-          <div class="waiting-player-name">
-            <span class="player-status-dot status-${status}"></span>
-            <span>${p.name} ${isSelf ? '(You)' : ''}</span>
-          </div>
-          <div class="waiting-player-badge status-${status}">${badgeText}</div>
-        `;
+
+        const avatarDiv = document.createElement('div');
+        avatarDiv.className = 'waiting-player-avatar';
+        avatarDiv.textContent = p.is_host ? '👑' : '👤';
+
+        const nameDiv = document.createElement('div');
+        nameDiv.className = 'waiting-player-name';
+        const dot = document.createElement('span');
+        dot.className = `player-status-dot status-${status}`;
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = isSelf ? `${p.name} (You)` : p.name;
+        nameDiv.appendChild(dot);
+        nameDiv.appendChild(nameSpan);
+
+        const badgeDiv = document.createElement('div');
+        badgeDiv.className = `waiting-player-badge status-${status}`;
+        badgeDiv.textContent = badgeText;
+
+        card.appendChild(avatarDiv);
+        card.appendChild(nameDiv);
+        card.appendChild(badgeDiv);
         gridEl.appendChild(card);
       });
     }
@@ -560,18 +734,23 @@ const MenuUI = (() => {
         roomSummary.activity_log.forEach(act => {
           const item = document.createElement('div');
           item.className = 'waiting-activity-item';
-          item.innerHTML = `
-            <span>${act.icon || 'ℹ️'}</span>
-            <span>${act.message}</span>
-            <span class="activity-time">${act.timestamp || ''}</span>
-          `;
+          const iconSpan = document.createElement('span');
+          iconSpan.textContent = act.icon || 'ℹ️';
+          const msgSpan = document.createElement('span');
+          msgSpan.textContent = act.message || '';
+          const timeSpan = document.createElement('span');
+          timeSpan.className = 'activity-time';
+          timeSpan.textContent = act.timestamp || '';
+          item.appendChild(iconSpan);
+          item.appendChild(msgSpan);
+          item.appendChild(timeSpan);
           activityListEl.appendChild(item);
         });
       }
     }
 
-    // Host controls
-    const isMeHost = (roomSummary.host_id === myPlayerId);
+    // Host controls (never shown to spectators)
+    const isMeHost = !isSpectator && (roomSummary.host_id === myPlayerId);
     const playerCount = roomSummary.players ? roomSummary.players.length : roomSummary.player_count;
     const canStart = isMeHost && playerCount >= 2;
 
@@ -589,7 +768,9 @@ const MenuUI = (() => {
     }
 
     if (noticeEl) {
-      if (isMeHost) {
+      if (isSpectator) {
+        noticeEl.textContent = '👁️ Spectating lobby — you will automatically enter live view when the host starts the match.';
+      } else if (isMeHost) {
         noticeEl.textContent = canStart
           ? 'Ready to start! Click the button below.'
           : 'Waiting for at least 1 more player to join…';
@@ -622,6 +803,9 @@ const MenuUI = (() => {
 
   function addLobbyChatMessage(msg, myPlayerId) {
     if (!msg) return;
+    if (msg.id && _seenLobbyMsgIds.has(msg.id)) return;
+    if (msg.id) _seenLobbyMsgIds.add(msg.id);
+
     const listEl = document.getElementById('lobby-chat-messages');
     if (!listEl) return;
 
@@ -629,13 +813,16 @@ const MenuUI = (() => {
     const hint = listEl.querySelector('.empty-chat-hint');
     if (hint) hint.remove();
 
-    const isSelf = (myPlayerId && msg.sender_id === myPlayerId);
+    const isSelf = !!(myPlayerId && msg.sender_id === myPlayerId);
+    const isSpec = !!msg.is_spectator;
+    const displayLabel = msg.display_name || (isSpec ? `[Spectator] ${msg.sender_name}` : msg.sender_name);
+
     const item = document.createElement('div');
-    item.className = `lobby-chat-msg${isSelf ? ' is-self' : ''}`;
+    item.className = `lobby-chat-msg${isSelf ? ' is-self' : ''}${isSpec ? ' is-spectator' : ''}`;
 
     const senderSpan = document.createElement('span');
     senderSpan.className = 'lobby-chat-sender';
-    senderSpan.textContent = isSelf ? `${msg.sender_name} (You):` : `${msg.sender_name}:`;
+    senderSpan.textContent = isSelf ? `${displayLabel} (You):` : `${displayLabel}:`;
 
     const textSpan = document.createElement('span');
     textSpan.className = 'lobby-chat-text';
@@ -654,6 +841,7 @@ const MenuUI = (() => {
   }
 
   function clearLobbyChat() {
+    _seenLobbyMsgIds.clear();
     const listEl = document.getElementById('lobby-chat-messages');
     if (listEl) {
       listEl.innerHTML = '<div class="empty-chat-hint">No messages yet. Say hello to your opponents!</div>';
@@ -673,5 +861,6 @@ const MenuUI = (() => {
     hideWaitingRoom,
     addLobbyChatMessage,
     clearLobbyChat,
+    openCreatePrivateRoomWorkflow,
   };
 })();
