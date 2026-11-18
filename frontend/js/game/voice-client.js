@@ -32,9 +32,26 @@ const VoiceClient = (() => {
   let _isMicDenied      = false;
   let _isDeafened       = false;
 
-  // peerId -> { pc, sender, audioEl, analyser, stream, candidateQueue, makingOffer, handlingOffer, lastOfferTime, offerSentCount }
+  // peerId -> { pc, sender, audioEl, analyser, analyserStream, stream, candidateQueue, makingOffer, handlingOffer, lastOfferTime, offerSentCount }
   const _peers = new Map();
   const _pendingPlayAudioElements = new Set();
+  const _iceRecoveryTimers = new Map();
+  const _iceRecoveryAttempts = new Map();
+  const MAX_ICE_RECOVERY_ATTEMPTS = 2;
+
+  function _clearIceRecoveryTimer(peerId) {
+    const timer = _iceRecoveryTimers.get(peerId);
+    if (timer) {
+      clearTimeout(timer);
+      _iceRecoveryTimers.delete(peerId);
+    }
+  }
+
+  function _extractIceUfrag(sdp) {
+    if (!sdp || typeof sdp !== 'string') return null;
+    const match = sdp.match(/^a=ice-ufrag:([^\r\n]+)/m);
+    return match ? match[1].trim() : null;
+  }
 
   /**
    * Deterministic offerer role:
@@ -119,24 +136,30 @@ const VoiceClient = (() => {
   }
 
   /**
-   * Update visual state of Speaker button:
-   * - Audio On (normal)
-   * - Deafened / Audio Off (red/muted)
+   * Update visual state of Speaker (Audio ON/OFF) button:
+   * - Audio On (high-contrast active green)
+   * - Audio Off / Deafened (high-contrast red muted)
    */
   function _updateSpeakerUI() {
     if (!_btnSpeaker) _cacheDOM();
     if (!_btnSpeaker) return;
 
     if (_isDeafened) {
+      _btnSpeaker.classList.remove('audio-on');
       _btnSpeaker.classList.add('deafened');
       if (_speakerIcon)  _speakerIcon.textContent  = '🔇';
-      if (_speakerLabel) _speakerLabel.textContent = 'Deafened';
-      _btnSpeaker.title = 'Audio deafened (click to hear players)';
+      if (_speakerLabel) _speakerLabel.textContent = 'Audio Off';
+      _btnSpeaker.title = 'Audio Off (click to turn audio on)';
+      _btnSpeaker.setAttribute('aria-label', 'Audio Off');
+      _btnSpeaker.setAttribute('aria-pressed', 'false');
     } else {
       _btnSpeaker.classList.remove('deafened');
+      _btnSpeaker.classList.add('audio-on');
       if (_speakerIcon)  _speakerIcon.textContent  = '🔊';
       if (_speakerLabel) _speakerLabel.textContent = 'Audio On';
-      _btnSpeaker.title = 'Audio active (click to deafen)';
+      _btnSpeaker.title = 'Audio On (click to turn audio off)';
+      _btnSpeaker.setAttribute('aria-label', 'Audio On');
+      _btnSpeaker.setAttribute('aria-pressed', 'true');
     }
   }
 
@@ -145,6 +168,10 @@ const VoiceClient = (() => {
       clearInterval(_speakingCheckInterval);
       _speakingCheckInterval = null;
     }
+
+    _iceRecoveryTimers.forEach((timer) => clearTimeout(timer));
+    _iceRecoveryTimers.clear();
+    _iceRecoveryAttempts.clear();
 
     _pendingPlayAudioElements.clear();
 
@@ -264,6 +291,16 @@ const VoiceClient = (() => {
         }
       });
     }
+
+    // Also retry any remote peer audio element that ended up paused (e.g. mobile Chrome/Android autoplay policy)
+    if (!_isDeafened) {
+      _peers.forEach((peerData, peerId) => {
+        const audio = peerData && peerData.audioEl;
+        if (audio && audio.srcObject && audio.paused && !_pendingPlayAudioElements.has(audio)) {
+          _attemptAudioPlayback(audio, peerId);
+        }
+      });
+    }
   }
 
   function _bindControlEvents() {
@@ -283,10 +320,10 @@ const VoiceClient = (() => {
       });
     }
 
-    // Android / iOS user gesture unlock across multiple touch/click interactions
+    // Android / iOS / desktop user gesture unlock across multiple touch/click/key interactions
     if (typeof document !== 'undefined' && document.addEventListener && !document._voiceGestureBound) {
       document._voiceGestureBound = true;
-      const userGestures = ['click', 'touchstart', 'pointerdown'];
+      const userGestures = ['click', 'touchstart', 'touchend', 'pointerdown', 'keydown'];
       userGestures.forEach((evtName) => {
         document.addEventListener(evtName, unlockAudioPlayback, { passive: true });
       });
@@ -326,6 +363,23 @@ const VoiceClient = (() => {
     _socket.on('voice_peer_joined', (data) => {
       if (!_isVoiceActive) return;
       if (data && data.peerId && data.peerId !== _localPlayerId) {
+        const existing = _peers.get(data.peerId);
+        if (existing && existing.pc) {
+          const pc = existing.pc;
+          const isEstablished = Boolean(pc.remoteDescription && pc.remoteDescription.type);
+          const isUnhealthy = (
+            pc.connectionState === 'disconnected' ||
+            pc.connectionState === 'failed' ||
+            pc.connectionState === 'closed' ||
+            pc.signalingState === 'closed'
+          );
+          // Peer rejoined on a fresh session (e.g., reconnect without prior voice_peer_left):
+          // tear down stale RTCPeerConnection so a clean handshake starts immediately.
+          // Preserve initial in-flight offer dedupe when signalingState === 'have-local-offer' with no remoteDescription.
+          if (isEstablished || isUnhealthy) {
+            _removePeer(data.peerId);
+          }
+        }
         if (_isOfferer(data.peerId)) {
           _initiatePeerConnection(data.peerId);
         } else {
@@ -355,6 +409,7 @@ const VoiceClient = (() => {
     _socket.on('voice_peer_left', (data) => {
       if (!_isVoiceActive) return;
       if (data && data.peerId) {
+        _iceRecoveryAttempts.delete(data.peerId);
         _removePeer(data.peerId);
       }
     });
@@ -506,6 +561,7 @@ const VoiceClient = (() => {
       sender: null,
       audioEl: null,
       analyser: null,
+      analyserStream: null,
       stream: null,
       candidateQueue: [],
       makingOffer: false,
@@ -552,14 +608,42 @@ const VoiceClient = (() => {
       }
       peerData.stream = remoteStream;
       _attachRemoteAudio(peerId, remoteStream);
+
+      // Mobile browsers (especially Android Chrome/TWA) often fire ontrack while
+      // the remote track is still muted; re-attempt playback when RTP unmutes it.
+      event.track.onunmute = () => {
+        const current = _peers.get(peerId);
+        if (current && current.audioEl && current.audioEl.paused && !_isDeafened) {
+          _attemptAudioPlayback(current.audioEl, peerId);
+        }
+      };
     };
 
     pc.onconnectionstatechange = () => {
       const current = _peers.get(peerId);
       if (!current || current.pc !== pc) return;
+      if (pc.connectionState === 'connected') {
+        _clearIceRecoveryTimer(peerId);
+        _iceRecoveryAttempts.delete(peerId);
+        return;
+      }
       // Allow transient 'disconnected' state to recover; clean up only on terminal states
       if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+        const wasFailed = pc.connectionState === 'failed';
         _removePeer(peerId);
+        if (wasFailed && _isVoiceActive) {
+          const attempts = _iceRecoveryAttempts.get(peerId) || 0;
+          if (attempts < MAX_ICE_RECOVERY_ATTEMPTS) {
+            _iceRecoveryAttempts.set(peerId, attempts + 1);
+            const timer = setTimeout(() => {
+              _iceRecoveryTimers.delete(peerId);
+              if (_isVoiceActive && !_peers.has(peerId)) {
+                _joinVoiceSession();
+              }
+            }, 1200);
+            _iceRecoveryTimers.set(peerId, timer);
+          }
+        }
       }
     };
 
@@ -602,6 +686,7 @@ const VoiceClient = (() => {
   function _setupRemoteAnalyser(peerId, remoteStream) {
     const peerData = _peers.get(peerId);
     if (!peerData) return;
+    if (peerData.analyser && peerData.analyserStream === remoteStream) return;
     try {
       const ctx = _getAudioContext();
       if (ctx && remoteStream) {
@@ -610,6 +695,7 @@ const VoiceClient = (() => {
         analyser.fftSize = 256;
         source.connect(analyser);
         peerData.analyser = analyser;
+        peerData.analyserStream = remoteStream;
       }
     } catch (e) {
       console.warn('[VoiceClient] Analyser setup error for peer', peerId, e);
@@ -675,6 +761,25 @@ const VoiceClient = (() => {
 
   async function _handleOffer(peerId, offer) {
     if (!_isVoiceActive) return;
+
+    // If the remote peer created a fresh RTCPeerConnection (new ice-ufrag) without a prior
+    // voice_peer_left, tear down our stale peer connection so renegotiation starts cleanly.
+    const existingPeer = _peers.get(peerId);
+    if (existingPeer && existingPeer.pc && !existingPeer.handlingOffer) {
+      const prevRemote = existingPeer.pc.remoteDescription;
+      const prevUfrag = _extractIceUfrag(prevRemote && prevRemote.sdp);
+      const nextUfrag = _extractIceUfrag(offer && offer.sdp);
+      const isUnhealthy = (
+        existingPeer.pc.connectionState === 'disconnected' ||
+        existingPeer.pc.connectionState === 'failed' ||
+        existingPeer.pc.connectionState === 'closed' ||
+        existingPeer.pc.signalingState === 'closed'
+      );
+      if ((prevRemote && prevRemote.type && prevUfrag && nextUfrag && prevUfrag !== nextUfrag) || isUnhealthy) {
+        _removePeer(peerId);
+      }
+    }
+
     const pc = _createPeerConnection(peerId);
     if (!pc) return;
     const peerData = _peers.get(peerId);
@@ -778,12 +883,14 @@ const VoiceClient = (() => {
   }
 
   function _removePeer(peerId) {
+    _clearIceRecoveryTimer(peerId);
     const peerData = _peers.get(peerId);
     if (peerData) {
       try {
         peerData.pc.close();
       } catch (e) {}
       if (peerData.audioEl) {
+        _pendingPlayAudioElements.delete(peerData.audioEl);
         peerData.audioEl.srcObject = null;
         if (typeof peerData.audioEl.remove === 'function') {
           peerData.audioEl.remove();
@@ -805,8 +912,8 @@ const VoiceClient = (() => {
 
     unlockAudioPlayback();
 
-    if (_localStream && _localTrack) {
-      // Toggle existing track
+    if (_localStream && _localTrack && _localTrack.readyState !== 'ended') {
+      // Toggle existing live track
       _isMicActive = !_isMicActive;
       _localTrack.enabled = _isMicActive;
       _updateMicUI();
@@ -825,7 +932,15 @@ const VoiceClient = (() => {
       return;
     }
 
-    // First time requesting microphone
+    // If a prior track ended (e.g. Android OS interrupted audio focus), dispose before re-acquiring
+    if (_localStream && typeof _localStream.getTracks === 'function') {
+      _localStream.getTracks().forEach(t => { if (t && typeof t.stop === 'function') t.stop(); });
+    }
+    _localStream   = null;
+    _localTrack    = null;
+    _localAnalyser = null;
+
+    // First time (or after ended track) requesting microphone
     _isMicConnecting = true;
     _isMicDenied     = false;
     _updateMicUI();
@@ -849,10 +964,26 @@ const VoiceClient = (() => {
       }
 
       _localStream = stream;
-      _localTrack  = stream.getAudioTracks()[0];
+      const track = stream.getAudioTracks()[0];
+      _localTrack  = track;
       _isMicActive = true;
       _isMicConnecting = false;
       _updateMicUI();
+
+      if (track) {
+        track.onended = () => {
+          if (_localTrack === track) {
+            _isMicActive = false;
+            _localTrack = null;
+            _localStream = null;
+            _localAnalyser = null;
+            _updateMicUI();
+            if (typeof TableUI !== 'undefined' && TableUI.setPlayerSpeaking) {
+              TableUI.setPlayerSpeaking('self', false);
+            }
+          }
+        };
+      }
 
       // Setup local audio analyser for local speaking indicator
       try {
@@ -921,7 +1052,7 @@ const VoiceClient = (() => {
     }
 
     if (typeof showToast === 'function') {
-      showToast(_isDeafened ? 'Audio deafened' : 'Audio enabled', 'info', 2000);
+      showToast(_isDeafened ? '🔇 Audio Off' : '🔊 Audio On', 'info', 1800);
     }
   }
 
@@ -997,6 +1128,7 @@ const VoiceClient = (() => {
     startVoice,
     toggleMic,
     toggleSpeaker,
+    isDeafened: () => _isDeafened,
     leaveVoice,
     unlockAudioPlayback,
     _isOfferer,

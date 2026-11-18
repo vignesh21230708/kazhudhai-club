@@ -56,6 +56,10 @@ const App = (() => {
   let _isOffline       = true;
   let _aiStepTimeout   = null;
   let _roundResolutionTimer = null;
+  let _resultsRedirectTimer = null;
+  let _activeMatchId   = null;
+  let _recentChatNotifTimer = null;
+  let _recentChatNotifSeq = 0;
   let _isStepping      = false;
   let _isRoundPaused   = false;
   let _pendingNextState = null;
@@ -71,6 +75,65 @@ const App = (() => {
       clearTimeout(_roundResolutionTimer);
       _roundResolutionTimer = null;
     }
+  }
+
+  function _clearResultsTimer() {
+    if (_resultsRedirectTimer) {
+      clearTimeout(_resultsRedirectTimer);
+      _resultsRedirectTimer = null;
+    }
+  }
+
+  function _hideRecentChatNotification() {
+    _recentChatNotifSeq += 1;
+    if (_recentChatNotifTimer) {
+      clearTimeout(_recentChatNotifTimer);
+      _recentChatNotifTimer = null;
+    }
+    const el = document.getElementById('chat-recent-toast');
+    if (el) {
+      el.classList.add('hidden');
+      el.classList.remove('is-spectator', 'is-pop');
+    }
+  }
+
+  /**
+   * Issue 5: Briefly display the latest incoming chat message outside the chat panel (~900ms).
+   * - Safely renders sender & message via textContent (XSS-safe).
+   * - Rapid bursts immediately replace content and reset timer via sequence counter.
+   * - Preserves full chat history in the chat panel.
+   */
+  function _showRecentChatNotification(msg) {
+    if (!msg || !msg.text) return;
+    const el = document.getElementById('chat-recent-toast');
+    const senderEl = document.getElementById('chat-recent-sender');
+    const textEl = document.getElementById('chat-recent-text');
+    if (!el || !senderEl || !textEl) return;
+
+    const isSpec = !!msg.is_spectator;
+    const senderLabel = msg.display_name || (isSpec ? `[Spectator] ${msg.sender_name || 'Spectator'}` : (msg.sender_name || 'Player'));
+
+    _recentChatNotifSeq += 1;
+    const seq = _recentChatNotifSeq;
+    if (_recentChatNotifTimer) {
+      clearTimeout(_recentChatNotifTimer);
+      _recentChatNotifTimer = null;
+    }
+
+    senderEl.textContent = `${senderLabel}:`;
+    textEl.textContent = String(msg.text);
+    el.classList.toggle('is-spectator', isSpec);
+    el.classList.remove('hidden', 'is-pop');
+    // Force reflow so rapid consecutive messages smoothly re-trigger entrance animation
+    void el.offsetWidth;
+    el.classList.add('is-pop');
+
+    _recentChatNotifTimer = setTimeout(() => {
+      if (_recentChatNotifSeq !== seq) return;
+      el.classList.add('hidden');
+      el.classList.remove('is-pop');
+      _recentChatNotifTimer = null;
+    }, 900);
   }
 
   const MAIN_MENU_MODALS = [
@@ -337,6 +400,7 @@ const App = (() => {
     if (willOpen) {
       _unreadInMatchChatCount = 0;
       _updateInMatchChatBadge();
+      _hideRecentChatNotification();
       const input = document.getElementById('ingame-chat-input');
       if (input) input.focus();
     }
@@ -356,20 +420,44 @@ const App = (() => {
       if (list) list.innerHTML = '<div class="empty-chat-hint">In-match chat is fresh for this game. Say hello!</div>';
       const input = document.getElementById('ingame-chat-input');
       if (input) input.value = '';
+      const err = document.getElementById('ingame-chat-error');
+      if (err) { err.textContent = ''; err.classList.add('hidden'); }
     } else if (stage === 'post_match') {
       _seenPostMatchMsgIds.clear();
       const list = document.getElementById('post-match-chat-messages');
       if (list) list.innerHTML = '<div class="empty-chat-hint">Match finished! Say GG to everyone.</div>';
       const input = document.getElementById('post-match-chat-input');
       if (input) input.value = '';
+      const err = document.getElementById('post-match-chat-error');
+      if (err) { err.textContent = ''; err.classList.add('hidden'); }
     }
   }
 
   function clearStageChatsOnMatchStart() {
     closeInMatchChat();
+    _hideRecentChatNotification();
     _clearStageChatUI('in_match');
     _clearStageChatUI('post_match');
     _localPostMatchReady = false;
+  }
+
+  /**
+   * Issues 4 & 6: Synchronously clear all stale previous-match timers, pause locks,
+   * and rendered cards BEFORE new match state arrives (for Start, Play Again, and Restart Game).
+   */
+  function prepareForNewMatch(data) {
+    _clearAiTimeout();
+    _clearRoundTimer();
+    _clearResultsTimer();
+    _isRoundPaused = false;
+    _pendingNextState = null;
+    _localPostMatchReady = false;
+    _activeMatchId = (data && data.match_id) || null;
+    _hideRecentChatNotification();
+    GameClient.reset();
+    if (typeof TableUI !== 'undefined' && TableUI.resetForNewMatch) {
+      TableUI.resetForNewMatch();
+    }
   }
 
   function _appendChatItem(listEl, msg, mySenderId) {
@@ -418,6 +506,7 @@ const App = (() => {
       if (typeof MenuUI !== 'undefined' && MenuUI.addLobbyChatMessage) {
         MenuUI.addLobbyChatMessage(msg, mySenderId);
       }
+      _showRecentChatNotification(msg);
       return;
     }
 
@@ -431,6 +520,7 @@ const App = (() => {
         _unreadInMatchChatCount++;
         _updateInMatchChatBadge();
       }
+      _showRecentChatNotification(msg);
       return;
     }
 
@@ -439,6 +529,19 @@ const App = (() => {
       if (msg.id) _seenPostMatchMsgIds.add(msg.id);
       const listEl = document.getElementById('post-match-chat-messages');
       _appendChatItem(listEl, msg, mySenderId);
+      _showRecentChatNotification(msg);
+    }
+  }
+
+  function _setInlineChatError(errorElId, msg) {
+    const el = document.getElementById(errorElId);
+    if (!el) return;
+    if (msg) {
+      el.textContent = msg;
+      el.classList.remove('hidden');
+    } else {
+      el.textContent = '';
+      el.classList.add('hidden');
     }
   }
 
@@ -448,35 +551,64 @@ const App = (() => {
       closeIngameChatBtn.addEventListener('click', () => closeInMatchChat());
     }
 
-    const ingameForm = document.getElementById('ingame-chat-form');
+    const ingameForm  = document.getElementById('ingame-chat-form');
     const ingameInput = document.getElementById('ingame-chat-input');
+    const ingameBtn   = document.getElementById('btn-send-ingame-chat');
+    if (ingameInput) {
+      ingameInput.addEventListener('input', () => _setInlineChatError('ingame-chat-error', ''));
+    }
+    if (ingameBtn) {
+      // Prevent mobile soft keyboard blur from shifting the drawer before submit fires
+      ingameBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    }
     if (ingameForm && ingameInput) {
       ingameForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const text = ingameInput.value.trim();
         if (!text) return;
+        _setInlineChatError('ingame-chat-error', '');
+        if (ingameBtn) ingameBtn.disabled = true;
         OnlineClient.sendStageChatMessage('in_match', text, (res) => {
-          if (res && !res.success) {
-            showToast(res.message || 'Failed to send message', 'error', 2000);
+          if (ingameBtn) ingameBtn.disabled = false;
+          if (!res || !res.success) {
+            const errMsg = (res && res.message) || 'Failed to send message. Please try again.';
+            _setInlineChatError('ingame-chat-error', errMsg);
+            showToast(errMsg, 'error', 3500);
+          } else {
+            ingameInput.value = '';
+            _setInlineChatError('ingame-chat-error', '');
           }
         });
-        ingameInput.value = '';
       });
     }
 
-    const postForm = document.getElementById('post-match-chat-form');
+    const postForm  = document.getElementById('post-match-chat-form');
     const postInput = document.getElementById('post-match-chat-input');
+    const postBtn   = document.getElementById('btn-send-post-match-chat');
+    if (postInput) {
+      postInput.addEventListener('input', () => _setInlineChatError('post-match-chat-error', ''));
+    }
+    if (postBtn) {
+      postBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    }
     if (postForm && postInput) {
       postForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const text = postInput.value.trim();
         if (!text) return;
+        _setInlineChatError('post-match-chat-error', '');
+        if (postBtn) postBtn.disabled = true;
         OnlineClient.sendStageChatMessage('post_match', text, (res) => {
-          if (res && !res.success) {
-            showToast(res.message || 'Failed to send message', 'error', 2000);
+          if (postBtn) postBtn.disabled = false;
+          if (!res || !res.success) {
+            const errMsg = (res && res.message) || 'Failed to send message. Please try again.';
+            _setInlineChatError('post-match-chat-error', errMsg);
+            showToast(errMsg, 'error', 3500);
+          } else {
+            postInput.value = '';
+            _setInlineChatError('post-match-chat-error', '');
           }
         });
-        postInput.value = '';
       });
     }
 
@@ -610,9 +742,14 @@ const App = (() => {
 
   async function startOfflineGame(config) {
     _clearAiTimeout();
-    _currentConfig = config;
-    _isOffline     = true;
-    _isRoundPaused = false;
+    _clearRoundTimer();
+    _clearResultsTimer();
+    _currentConfig    = config;
+    _isOffline        = true;
+    _isRoundPaused    = false;
+    _pendingNextState = null;
+    _activeMatchId    = null;
+    _hideRecentChatNotification();
 
     showToast('Shuffling and dealing cards…', 'info', 2000);
 
@@ -904,9 +1041,11 @@ const App = (() => {
       isMyTurn
     );
 
-    // Check for game end
-    if (state.status === 'finished') {
-      setTimeout(() => {
+    // Check for game end (offline only; online transitions via authoritative game_over event)
+    if (_isOffline && state.status === 'finished') {
+      _clearResultsTimer();
+      _resultsRedirectTimer = setTimeout(() => {
+        _resultsRedirectTimer = null;
         if (GameClient.isActive()) _showResults(state);
       }, 1400);
     }
@@ -915,6 +1054,10 @@ const App = (() => {
   function _showResults(state) {
     _clearAiTimeout();
     _clearRoundTimer();
+    _clearResultsTimer();
+    _isRoundPaused = false;
+    _pendingNextState = null;
+    _hideRecentChatNotification();
     if (typeof TableUI !== 'undefined' && TableUI.updateTurnTimer) {
       TableUI.updateTurnTimer(null);
     }
@@ -1104,9 +1247,12 @@ const App = (() => {
   function handleCreateNewRoom() {
     _clearAiTimeout();
     _clearRoundTimer();
+    _clearResultsTimer();
     _isRoundPaused = false;
     _pendingNextState = null;
+    _activeMatchId = null;
     _localPostMatchReady = false;
+    _hideRecentChatNotification();
     closeInMatchChat();
     _clearStageChatUI('in_match');
     _clearStageChatUI('post_match');
@@ -1162,8 +1308,22 @@ const App = (() => {
    */
   function renderSpectatorState(state) {
     if (!state) return;
+    if (_activeMatchId && state.match_id && state.match_id !== _activeMatchId) {
+      return;
+    }
+    if (state.match_id && state.match_id !== _activeMatchId) {
+      _activeMatchId = state.match_id;
+      _clearRoundTimer();
+      _isRoundPaused = false;
+      _pendingNextState = null;
+    }
     _isOffline = false;
     GameClient.setState(state);
+
+    if (_isRoundPaused) {
+      _pendingNextState = state;
+      return;
+    }
 
     if (typeof TableUI.setSpectatorMode === 'function') {
       TableUI.setSpectatorMode(true);
@@ -1205,6 +1365,25 @@ const App = (() => {
   }
 
   function renderOnlineState(state) {
+    if (!state) return;
+    // Ignore stale states from a previous match
+    if (_activeMatchId && state.match_id && state.match_id !== _activeMatchId) {
+      return;
+    }
+    // If a brand-new match_id arrived before game_started finished, never leave it blocked by an old pause
+    if (state.match_id && state.match_id !== _activeMatchId) {
+      _activeMatchId = state.match_id;
+      _clearRoundTimer();
+      _clearResultsTimer();
+      _isRoundPaused = false;
+      _pendingNextState = null;
+    }
+    // Do not render an already-finished match over the active Results screen
+    if (state.status === 'finished' && Screens.current() === 'screen-results') {
+      GameClient.setState(state);
+      return;
+    }
+
     _isOffline = false;
     GameClient.setState(state);
     if (state.activity_log) {
@@ -1217,9 +1396,9 @@ const App = (() => {
       TableUI.setOnlineControlsVisible(true, false);
     }
 
-    // If currently paused in round resolution animation, do NOT destroy the timer!
-    // Store the state so it is cleanly rendered once the resolution finishes.
-    if (_isRoundPaused) {
+    // If currently paused in round resolution animation of the SAME active match,
+    // store the state so it renders cleanly once the resolution finishes.
+    if (_isRoundPaused && state.status === 'playing') {
       _pendingNextState = state;
       return;
     }
@@ -1269,10 +1448,11 @@ const App = (() => {
 
   function handleOnlineCardPlayed(action) {
     if (!action || !action.card) return;
+    if (_activeMatchId && action.match_id && action.match_id !== _activeMatchId) return;
     const myId = OnlineClient.getPlayerId();
 
-    // If played by an opponent, display their card onto the table
-    if (action.player_id !== myId) {
+    // If played by an opponent (or viewed by spectator), display card onto the table
+    if (!myId || action.player_id !== myId) {
       TableUI.addPlayedCard(action.card, action.player_name, action.is_attack);
       if (action.is_attack) {
         TableUI.showAttackBanner(action.player_name);
@@ -1284,6 +1464,9 @@ const App = (() => {
   }
 
   function handleOnlineRoundResolution(roundResult) {
+    if (!roundResult) return;
+    if (_activeMatchId && roundResult.match_id && roundResult.match_id !== _activeMatchId) return;
+    const resolutionMatchId = roundResult.match_id || _activeMatchId;
     _clearRoundTimer();
     _isRoundPaused = true;
 
@@ -1301,7 +1484,7 @@ const App = (() => {
       }
 
       const myId = OnlineClient.getPlayerId();
-      if (roundResult.winner_id === myId) {
+      if (myId && roundResult.winner_id === myId) {
         TableUI.flashSelfAvatar(roundResult.is_attack ? 'rgba(255,80,80,0.8)' : 'rgba(80,255,80,0.8)');
       } else if (roundResult.winner_id) {
         TableUI.flashOpponentAvatar(roundResult.winner_id, roundResult.is_attack ? 'rgba(255,80,80,0.8)' : 'rgba(80,255,80,0.8)');
@@ -1318,6 +1501,11 @@ const App = (() => {
     }
 
     _roundResolutionTimer = setTimeout(() => {
+      // Never apply an old match's resolution timer after Restart / Play Again
+      if (resolutionMatchId && _activeMatchId && resolutionMatchId !== _activeMatchId) {
+        _roundResolutionTimer = null;
+        return;
+      }
       try {
         TableUI.clearPlayedCards(true);
         TableUI.hideAttackBanner();
@@ -1331,11 +1519,19 @@ const App = (() => {
       }
       const state = _pendingNextState || GameClient.getState();
       _pendingNextState = null;
-      if (state) _renderState(state);
+      if (!state) return;
+      if (typeof OnlineClient !== 'undefined' && OnlineClient.isSpectator && OnlineClient.isSpectator()) {
+        renderSpectatorState(state);
+      } else {
+        _renderState(state);
+      }
     }, 1800);
   }
 
   function showOnlineResults(data) {
+    if (_activeMatchId && data && data.match_id && data.match_id !== _activeMatchId) {
+      return;
+    }
     _showResults(data);
   }
 
@@ -1344,8 +1540,11 @@ const App = (() => {
   function exitToMenu() {
     _clearAiTimeout();
     _clearRoundTimer();
+    _clearResultsTimer();
     _isRoundPaused = false;
     _pendingNextState = null;
+    _activeMatchId = null;
+    _hideRecentChatNotification();
     if (typeof TableUI !== 'undefined' && TableUI.updateTurnTimer) {
       TableUI.updateTurnTimer(null);
     }
@@ -1423,6 +1622,7 @@ const App = (() => {
     handleCreateNewRoom,
     handleStageChatMessage,
     clearStageChatsOnMatchStart,
+    prepareForNewMatch,
     toggleInMatchChat,
     closeInMatchChat,
     handleOnlineCardPlayed,

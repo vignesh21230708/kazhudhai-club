@@ -254,6 +254,7 @@ def register_socket_events(socketio):
                 }, room=room.code)
                 emit('activity_logged', act, room=room.code)
                 personalized_state = room.game_state.get_state_for_player(player.id)
+                personalized_state['match_id'] = room.match_id
                 personalized_state['activity_log'] = room.activity_log[::-1]
                 emit('game_state', personalized_state, to=request.sid)
                 _broadcast_personalized_state(room)
@@ -370,13 +371,15 @@ def register_socket_events(socketio):
                     act = room.add_activity('play', f"⏰ Turn timeout: {p_name} auto-played {card_label}.", player_name=p_name, icon='⏳')
 
                 # Broadcast card played to all players in the room
-                socketio.emit('card_played', res['action'], room=room.code)
+                action_payload = dict(res['action'], match_id=room.match_id)
+                socketio.emit('card_played', action_payload, room=room.code)
                 socketio.emit('activity_logged', act, room=room.code)
 
                 # Round completion handling
                 if res['round_completed']:
                     round_res = res['last_round_result']
-                    socketio.emit('round_resolved', round_res, room=room.code)
+                    round_payload = dict(round_res, match_id=room.match_id) if isinstance(round_res, dict) else round_res
+                    socketio.emit('round_resolved', round_payload, room=room.code)
                     if round_res and round_res.get('eliminated_players'):
                         for safe_name in round_res['eliminated_players']:
                             act_safe = room.add_activity('safe', f"🎉 {safe_name} is Safe!", player_name=safe_name, icon='🎉')
@@ -444,6 +447,7 @@ def register_socket_events(socketio):
                 'room_code':  room.code,
                 'match_id':   room.match_id,
                 'deck_count': room.deck_count,
+                'reason':     'start',
             }, room=room.code)
             emit('activity_logged', act, room=room.code)
             emit('spectators_updated', room.get_spectators_summary(), room=room.code)
@@ -454,7 +458,12 @@ def register_socket_events(socketio):
             # Send personalized states to players and sanitized state to spectators
             _broadcast_personalized_state(room)
 
-            return {'success': True}
+            return {
+                'success':    True,
+                'room_code':  room.code,
+                'match_id':   room.match_id,
+                'deck_count': room.deck_count,
+            }
         except Exception as e:
             return {'success': False, 'message': str(e)}
 
@@ -483,6 +492,7 @@ def register_socket_events(socketio):
                 'room_code':  room.code,
                 'match_id':   room.match_id,
                 'deck_count': room.deck_count,
+                'reason':     'restart',
             }, room=room.code)
             emit('activity_logged', act, room=room.code)
             emit('spectators_updated', room.get_spectators_summary(), room=room.code)
@@ -492,7 +502,12 @@ def register_socket_events(socketio):
 
             _broadcast_personalized_state(room)
 
-            return {'success': True}
+            return {
+                'success':    True,
+                'room_code':  room.code,
+                'match_id':   room.match_id,
+                'deck_count': room.deck_count,
+            }
         except Exception as e:
             return {'success': False, 'message': str(e)}
 
@@ -548,6 +563,7 @@ def register_socket_events(socketio):
                 'room_code':  room.code,
                 'match_id':   room.match_id,
                 'deck_count': room.deck_count,
+                'reason':     'play_again',
             }, room=room.code)
             emit('activity_logged', act, room=room.code)
             emit('spectators_updated', room.get_spectators_summary(), room=room.code)
@@ -601,13 +617,15 @@ def register_socket_events(socketio):
                     act = room.add_activity('play', f"{p_name} played {card_label}.", player_name=p_name, icon='🃏')
 
                 # Broadcast the action card played to all table participants
-                emit('card_played', res['action'], room=room.code)
+                action_payload = dict(res['action'], match_id=room.match_id)
+                emit('card_played', action_payload, room=room.code)
                 emit('activity_logged', act, room=room.code)
 
                 # If round resolved, broadcast round completion details
                 if res['round_completed']:
                     round_res = res['last_round_result']
-                    emit('round_resolved', round_res, room=room.code)
+                    round_payload = dict(round_res, match_id=room.match_id) if isinstance(round_res, dict) else round_res
+                    emit('round_resolved', round_payload, room=room.code)
 
                     # Record eliminated safe players
                     if round_res and round_res.get('eliminated_players'):
@@ -656,7 +674,9 @@ def register_socket_events(socketio):
                 and _get_authenticated_player(room, verified_player_id) is not None
             ):
                 try:
-                    emit('game_state', room.game_state.get_state_for_player(verified_player_id), to=request.sid)
+                    resync_state = room.game_state.get_state_for_player(verified_player_id)
+                    resync_state['match_id'] = room.match_id
+                    emit('game_state', resync_state, to=request.sid)
                 except Exception:
                     pass
             return {'success': False, 'message': str(e)}
@@ -679,6 +699,7 @@ def register_socket_events(socketio):
             if requested_id and requested_id != caller_spec.id:
                 return {'success': False, 'message': 'Unauthorized: socket does not match spectator identity'}
             spec_state = room.game_state.get_spectator_state()
+            spec_state['match_id'] = room.match_id
             spec_state['activity_log'] = room.activity_log[::-1]
             spec_summary = room.get_spectators_summary()
             spec_state['spectator_count'] = spec_summary['spectator_count']
@@ -692,6 +713,7 @@ def register_socket_events(socketio):
             return {'success': False, 'message': 'Unauthorized: socket does not match player identity'}
 
         p_state = room.game_state.get_state_for_player(player.id)
+        p_state['match_id'] = room.match_id
         p_state['activity_log'] = room.activity_log[::-1]
         spec_summary = room.get_spectators_summary()
         p_state['spectator_count'] = spec_summary['spectator_count']
@@ -706,7 +728,7 @@ def register_socket_events(socketio):
         try:
             data = data or {}
             room_code    = (data.get('roomCode') or '').strip().upper()
-            sender_id    = data.get('playerId') or data.get('spectatorId') or data.get('senderId')
+            sender_id    = data.get('spectatorId') or data.get('playerId') or data.get('senderId')
             message_text = (data.get('message') or '').strip()
 
             if not message_text:
@@ -722,11 +744,16 @@ def register_socket_events(socketio):
             if room.status != 'waiting':
                 return {'success': False, 'message': 'Chat is only available in the lobby'}
 
-            auth_player = _get_authenticated_player(room, sender_id)
-            auth_spec   = _get_authenticated_spectator(room, sender_id)
-            if not auth_player and not auth_spec:
-                return {'success': False, 'message': 'Unauthorized: socket does not match sender identity'}
-            verified_sender_id = auth_player.id if auth_player else auth_spec.id
+            caller_spec = room.get_spectator_by_sid(request.sid)
+            if caller_spec is not None:
+                if sender_id and sender_id != caller_spec.id:
+                    return {'success': False, 'message': 'Unauthorized: socket does not match spectator identity'}
+                verified_sender_id = caller_spec.id
+            else:
+                auth_player = _get_authenticated_player(room, sender_id)
+                if not auth_player:
+                    return {'success': False, 'message': 'Unauthorized: socket does not match sender identity'}
+                verified_sender_id = auth_player.id
 
             chat_msg = room.add_stage_chat_message(
                 stage='pre_match',
@@ -747,7 +774,7 @@ def register_socket_events(socketio):
         try:
             data = data or {}
             room_code    = (data.get('roomCode') or '').strip().upper()
-            sender_id    = data.get('senderId') or data.get('playerId') or data.get('spectatorId')
+            sender_id    = data.get('senderId') or data.get('spectatorId') or data.get('playerId')
             stage        = (data.get('stage') or '').strip()
             message_text = data.get('message')
 
@@ -755,11 +782,16 @@ def register_socket_events(socketio):
             if not room:
                 return {'success': False, 'message': 'Room not found'}
 
-            auth_player = _get_authenticated_player(room, sender_id)
-            auth_spec   = _get_authenticated_spectator(room, sender_id)
-            if not auth_player and not auth_spec:
-                return {'success': False, 'message': 'Unauthorized: socket does not match sender identity'}
-            verified_sender_id = auth_player.id if auth_player else auth_spec.id
+            caller_spec = room.get_spectator_by_sid(request.sid)
+            if caller_spec is not None:
+                if sender_id and sender_id != caller_spec.id:
+                    return {'success': False, 'message': 'Unauthorized: socket does not match spectator identity'}
+                verified_sender_id = caller_spec.id
+            else:
+                auth_player = _get_authenticated_player(room, sender_id)
+                if not auth_player:
+                    return {'success': False, 'message': 'Unauthorized: socket does not match sender identity'}
+                verified_sender_id = auth_player.id
 
             chat_msg = room.add_stage_chat_message(
                 stage=stage,
@@ -781,6 +813,7 @@ def register_socket_events(socketio):
     @socketio.on('join_as_spectator')
     def handle_join_as_spectator(data):
         try:
+            data = data or {}
             room_code      = (data.get('roomCode') or '').strip().upper()
             spectator_name = (data.get('spectatorName') or data.get('playerName') or 'Spectator').strip()
 
@@ -800,6 +833,7 @@ def register_socket_events(socketio):
             spec_state = None
             if room.status == 'playing' and room.game_state:
                 spec_state = room.game_state.get_spectator_state()
+                spec_state['match_id'] = room.match_id
                 spec_state['activity_log'] = room.activity_log[::-1]
                 spec_state['spectator_count'] = spec_summary['spectator_count']
                 spec_state['spectators'] = spec_summary['spectators']
@@ -810,6 +844,55 @@ def register_socket_events(socketio):
                 'room_code':       room.code,
                 'spectator_id':    spec.id,
                 'spectator_name':  spec.name,
+                'spectator_token': spec.reconnect_token,
+                'room_status':     room.status,
+                'match_id':        room.match_id,
+                'room':            room.to_lobby_summary(),
+                'spectators':      spec_summary['spectators'],
+                'spectator_count': spec_summary['spectator_count'],
+                'spectator_state': spec_state,
+            }
+        except Exception as e:
+            return {'success': False, 'message': str(e)}
+
+    @socketio.on('reconnect_spectator')
+    def handle_reconnect_spectator(data):
+        try:
+            data = data or {}
+            room_code = (data.get('roomCode') or '').strip().upper()
+            token     = data.get('spectatorToken')
+            if not room_code or not token:
+                return {'success': False, 'message': 'Spectator session details missing'}
+
+            room, spec = room_manager.reconnect_spectator(
+                room_code=room_code,
+                spectator_token=token,
+                new_sid=request.sid,
+            )
+            if not room or not spec:
+                return {'success': False, 'message': 'Spectator session expired or room closed'}
+
+            join_room(room.code)
+            spec_summary = room.get_spectators_summary()
+            emit('spectators_updated', spec_summary, room=room.code)
+            if room.status == 'waiting':
+                emit('room_updated', room.to_lobby_summary(), room=room.code)
+
+            spec_state = None
+            if room.status == 'playing' and room.game_state:
+                spec_state = room.game_state.get_spectator_state()
+                spec_state['match_id'] = room.match_id
+                spec_state['activity_log'] = room.activity_log[::-1]
+                spec_state['spectator_count'] = spec_summary['spectator_count']
+                spec_state['spectators'] = spec_summary['spectators']
+                emit('spectator_state', spec_state, to=request.sid)
+
+            return {
+                'success':         True,
+                'room_code':       room.code,
+                'spectator_id':    spec.id,
+                'spectator_name':  spec.name,
+                'spectator_token': spec.reconnect_token,
                 'room_status':     room.status,
                 'match_id':        room.match_id,
                 'room':            room.to_lobby_summary(),
@@ -940,6 +1023,7 @@ def register_socket_events(socketio):
             # Return room & game info
             if room.status == 'playing' and room.game_state:
                 personalized_state = room.game_state.get_state_for_player(player.id)
+                personalized_state['match_id'] = room.match_id
                 personalized_state['activity_log'] = room.activity_log[::-1]
                 emit('game_state', personalized_state, to=request.sid)
                 _broadcast_personalized_state(room)
@@ -1050,7 +1134,13 @@ def register_socket_events(socketio):
             return {'success': False, 'message': 'Unauthorized: socket does not match player identity'}
 
         target_player = room.players.get(target_peer_id)
-        if not target_player or not target_player.sid:
+        if (
+            not target_player
+            or not target_player.sid
+            or not target_player.connected
+            or target_peer_id in room.spectators
+            or target_peer_id == sender_player.id
+        ):
             return {'success': False, 'message': 'Target peer not connected'}
 
         emit('voice_signal', {
@@ -1090,6 +1180,7 @@ def register_socket_events(socketio):
         for p in room.players.values():
             if p.sid and p.connected:
                 p_state = room.game_state.get_state_for_player(p.id)
+                p_state['match_id'] = room.match_id
                 p_state['activity_log'] = activity_history
                 p_state['spectator_count'] = spec_summary['spectator_count']
                 p_state['spectators'] = spec_summary['spectators']
@@ -1097,6 +1188,7 @@ def register_socket_events(socketio):
 
         if room.spectators:
             base_spec_state = room.game_state.get_spectator_state()
+            base_spec_state['match_id'] = room.match_id
             base_spec_state['activity_log'] = activity_history
             base_spec_state['spectator_count'] = spec_summary['spectator_count']
             base_spec_state['spectators'] = spec_summary['spectators']

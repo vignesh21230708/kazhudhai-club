@@ -13,11 +13,19 @@ const OnlineClient = (() => {
   let _reconnectToken  = null;
   let _isReconnecting  = false;
   let _initPromise     = null;
-  let _isSpectator     = false;
-  let _spectatorId     = null;
-  let _spectatorName   = null;
-  let _matchId         = null;
-  let _postMatchStatus = null;
+  let _isSpectator      = false;
+  let _spectatorId      = null;
+  let _spectatorName    = null;
+  let _spectatorToken   = null;
+  let _spectatingIntent = false;
+  let _matchId          = null;
+  let _postMatchStatus  = null;
+  let _restartInFlight  = false;
+  let _playAgainInFlight = false;
+
+  function setSpectatingIntent(val) {
+    _spectatingIntent = !!val;
+  }
 
   function isConnected() {
     return !!_socket && _socket.connected;
@@ -146,8 +154,10 @@ const OnlineClient = (() => {
         TableUI.updatePlayerStatus(_playerId || 'human', 'connected');
       }
 
-      // Check if THIS tab has an active reconnection session to restore (never hijack spectator mode)
-      if (!_isSpectator) {
+      // Restore active spectator or player session safely after reconnect
+      if (_isSpectator && _roomCode && _spectatorToken) {
+        reconnectSpectator();
+      } else if (!_isSpectator && !_spectatingIntent) {
         const activeSession = (typeof Storage !== 'undefined' && Storage.getActiveSession)
           ? Storage.getActiveSession()
           : null;
@@ -185,6 +195,9 @@ const OnlineClient = (() => {
 
     // Real-time lobby updates
     _socket.on('room_updated', (roomSummary) => {
+      if (!_isSpectator && _playerId && roomSummary && roomSummary.host_id) {
+        _isHost = (roomSummary.host_id === _playerId);
+      }
       MenuUI.updateWaitingRoom(roomSummary, _isSpectator ? _spectatorId : _playerId, _isSpectator);
       if (App && App.handleSpectatorsUpdated && roomSummary) {
         App.handleSpectatorsUpdated({
@@ -194,15 +207,21 @@ const OnlineClient = (() => {
       }
     });
 
-    // Game started signal (for both players and live spectators)
+    // Game started signal (for initial start, Play Again, and Host Restart Game)
     _socket.on('game_started', (data) => {
       _matchId = (data && data.match_id) || null;
       _postMatchStatus = null;
+      _restartInFlight = false;
+      _playAgainInFlight = false;
+
       if (typeof MenuUI !== 'undefined' && MenuUI.clearLobbyChat) {
         MenuUI.clearLobbyChat();
       }
       if (typeof App !== 'undefined' && App.clearStageChatsOnMatchStart) {
         App.clearStageChatsOnMatchStart();
+      }
+      if (typeof App !== 'undefined' && App.prepareForNewMatch) {
+        App.prepareForNewMatch(data);
       }
       MenuUI.hideWaitingRoom();
       Screens.go('screen-game');
@@ -224,7 +243,15 @@ const OnlineClient = (() => {
       if (!_isSpectator && typeof VoiceClient !== 'undefined' && VoiceClient.startVoice) {
         VoiceClient.startVoice(_socket, _roomCode, _playerId, _playerName);
       }
-      showToast(_isSpectator ? 'Match started! Spectating live…' : 'Game started! Distributing cards…', 'info', 2000);
+      const startReason = data && data.reason;
+      const startMsg = _isSpectator
+        ? (startReason === 'restart' ? 'Host restarted the match. Spectating live…' : 'Match started! Spectating live…')
+        : (startReason === 'restart'
+            ? 'Match restarted! Dealing fresh cards…'
+            : (startReason === 'play_again'
+                ? 'New match started! Dealing fresh cards…'
+                : 'Game started! Distributing cards…'));
+      showToast(startMsg, 'info', 2000);
     });
 
     // Authoritative personalized game state (players only)
@@ -371,25 +398,36 @@ const OnlineClient = (() => {
     return null;
   }
 
-  // Network state listeners for unexpected connection loss
+  // Network state listeners for unexpected connection loss & clean recovery
+  let _reportedOffline = false;
   if (typeof window !== 'undefined' && window.addEventListener) {
     window.addEventListener('offline', () => {
       console.warn('[OnlineClient] Network offline detected');
-      if (_socket && _socket.connected && _roomCode && _playerId) {
+      _reportedOffline = true;
+      if (!_isSpectator && _socket && _socket.connected && _roomCode && _playerId) {
         _socket.emit('client_connection_lost', {
           roomCode: _roomCode,
           playerId: _playerId,
         });
       }
-      if (typeof TableUI !== 'undefined') {
+      if (!_isSpectator && typeof TableUI !== 'undefined' && _playerId) {
         TableUI.updatePlayerStatus(_playerId, 'reconnecting');
       }
     });
 
     window.addEventListener('online', () => {
       console.log('[OnlineClient] Network online restored');
+      const wasOffline = _reportedOffline;
+      _reportedOffline = false;
       if (_socket && !_socket.connected) {
         _socket.connect();
+      } else if (wasOffline && _socket && _socket.connected) {
+        // Restore server-side connected=True status if browser briefly fired offline without dropping socket
+        if (_isSpectator && _roomCode && _spectatorToken) {
+          reconnectSpectator();
+        } else if (!_isSpectator && _reconnectToken && _roomCode) {
+          reconnectSession(_reconnectToken, _roomCode, _playerId);
+        }
       }
     });
   }
@@ -476,14 +514,16 @@ const OnlineClient = (() => {
         return;
       }
 
-      _roomCode        = res.room_code;
-      _playerId        = res.player_id;
-      _isHost          = true;
-      _reconnectToken  = res.reconnect_token;
-      _isSpectator     = false;
-      _spectatorId     = null;
-      _spectatorName   = null;
-      _postMatchStatus = null;
+      _roomCode         = res.room_code;
+      _playerId         = res.player_id;
+      _isHost           = true;
+      _reconnectToken   = res.reconnect_token;
+      _isSpectator      = false;
+      _spectatorId      = null;
+      _spectatorName    = null;
+      _spectatorToken   = null;
+      _spectatingIntent = false;
+      _postMatchStatus  = null;
 
       // Save session in persistent Storage for resilient reconnect across app restarts
       if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
@@ -548,15 +588,17 @@ const OnlineClient = (() => {
         return;
       }
 
-      _roomCode        = res.room_code;
-      _playerId        = res.player_id;
-      _playerName      = res.player_name || playerName;
-      _isHost          = res.is_host;
-      _reconnectToken  = res.reconnect_token;
-      _isSpectator     = false;
-      _spectatorId     = null;
-      _spectatorName   = null;
-      _postMatchStatus = res.post_match_status || null;
+      _roomCode         = res.room_code;
+      _playerId         = res.player_id;
+      _playerName       = res.player_name || playerName;
+      _isHost           = res.is_host;
+      _reconnectToken   = res.reconnect_token;
+      _isSpectator      = false;
+      _spectatorId      = null;
+      _spectatorName    = null;
+      _spectatorToken   = null;
+      _spectatingIntent = false;
+      _postMatchStatus  = res.post_match_status || null;
 
       if (typeof Storage !== 'undefined' && Storage.saveActiveSession) {
         Storage.saveActiveSession({
@@ -654,22 +696,52 @@ const OnlineClient = (() => {
   }
 
   /**
-   * Restart game (existing host-controlled Restart Game — preserved unchanged)
+   * Restart game (host-controlled Restart Game — distinct from Play Again).
+   * Shows feedback ONLY after the server confirms success or failure.
    */
-  function restartGame() {
-    if (_isSpectator || !_socket || !_roomCode || !_playerId) return;
-    if (_isHost) {
-      _socket.emit('restart_game', {
-        roomCode: _roomCode,
-        playerId: _playerId,
-      }, (res) => {
-        if (res && !res.success) {
-          showToast(res.message || 'Cannot restart game', 'error');
-        }
-      });
-    } else {
-      showToast('Only the host can restart the game', 'info');
+  function restartGame(callback) {
+    if (_isSpectator || !_socket || !_roomCode || !_playerId) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Not connected to room' });
+      return;
     }
+    if (!_isHost) {
+      const msg = 'Only the host can restart the game';
+      showToast(msg, 'info', 2500);
+      if (typeof callback === 'function') callback({ success: false, message: msg });
+      return;
+    }
+    if (!_socket.connected) {
+      const msg = 'Reconnecting to server… please try restarting again in a moment.';
+      showToast(msg, 'error', 3000);
+      if (typeof callback === 'function') callback({ success: false, message: msg });
+      return;
+    }
+    if (_restartInFlight) return;
+    _restartInFlight = true;
+
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      _restartInFlight = false;
+      const msg = 'Restart request timed out. Please try again.';
+      showToast(msg, 'error', 3000);
+      if (typeof callback === 'function') callback({ success: false, message: msg });
+    }, 6000);
+
+    _socket.emit('restart_game', {
+      roomCode: _roomCode,
+      playerId: _playerId,
+    }, (res) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      _restartInFlight = false;
+      if (!res || !res.success) {
+        showToast((res && res.message) || 'Cannot restart game', 'error', 3000);
+      }
+      if (typeof callback === 'function') callback(res || { success: false, message: 'Cannot restart game' });
+    });
   }
 
   /**
@@ -700,14 +772,37 @@ const OnlineClient = (() => {
       if (typeof callback === 'function') callback({ success: false, message: 'Not eligible for Play Again' });
       return;
     }
+    if (!_socket.connected) {
+      const msg = 'Reconnecting to server… please wait a moment.';
+      showToast(msg, 'error', 3000);
+      if (typeof callback === 'function') callback({ success: false, message: msg });
+      return;
+    }
+    if (_playAgainInFlight) return;
+    _playAgainInFlight = true;
+
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      _playAgainInFlight = false;
+      const msg = 'Play Again request timed out. Please try again.';
+      showToast(msg, 'error', 3000);
+      if (typeof callback === 'function') callback({ success: false, message: msg });
+    }, 6000);
+
     _socket.emit('play_again', {
       roomCode: _roomCode,
       playerId: _playerId,
     }, (res) => {
-      if (res && !res.success) {
-        showToast(res.message || 'Cannot start Play Again yet', 'info', 2500);
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      _playAgainInFlight = false;
+      if (!res || !res.success) {
+        showToast((res && res.message) || 'Cannot start Play Again yet', 'info', 2500);
       }
-      if (typeof callback === 'function') callback(res);
+      if (typeof callback === 'function') callback(res || { success: false, message: 'Cannot start Play Again yet' });
     });
   }
 
@@ -715,6 +810,7 @@ const OnlineClient = (() => {
    * Stage 4: Join a waiting or active room as a live spectator.
    */
   async function joinAsSpectator({ roomCode, spectatorName }, callback) {
+    _spectatingIntent = true;
     let socket = null;
     try {
       socket = await _ensureConnected();
@@ -738,16 +834,17 @@ const OnlineClient = (() => {
         return;
       }
 
-      _roomCode        = res.room_code;
-      _playerId        = null;
-      _playerName      = null;
-      _isHost          = false;
-      _reconnectToken  = null;
-      _isSpectator     = true;
-      _spectatorId     = res.spectator_id;
-      _spectatorName   = res.spectator_name || cleanName;
-      _matchId         = res.match_id || null;
-      _postMatchStatus = null;
+      _roomCode         = res.room_code;
+      _playerId         = null;
+      _playerName       = null;
+      _isHost           = false;
+      _reconnectToken   = null;
+      _isSpectator      = true;
+      _spectatorId      = res.spectator_id;
+      _spectatorName    = res.spectator_name || cleanName;
+      _spectatorToken   = res.spectator_token || null;
+      _matchId          = res.match_id || null;
+      _postMatchStatus  = null;
 
       MenuUI.hideModal('modal-spectate');
 
@@ -804,12 +901,41 @@ const OnlineClient = (() => {
     } else if (typeof onComplete === 'function') {
       onComplete();
     }
-    _roomCode        = null;
-    _spectatorId     = null;
-    _spectatorName   = null;
-    _isSpectator     = false;
-    _matchId         = null;
-    _postMatchStatus = null;
+    _roomCode         = null;
+    _spectatorId      = null;
+    _spectatorName    = null;
+    _spectatorToken   = null;
+    _spectatingIntent = false;
+    _isSpectator      = false;
+    _matchId          = null;
+    _postMatchStatus  = null;
+  }
+
+  /**
+   * Re-attach an active spectator session seamlessly after a transient socket reconnect.
+   */
+  function reconnectSpectator() {
+    if (!_socket || !_isSpectator || !_roomCode || !_spectatorToken) return;
+    _socket.emit('reconnect_spectator', {
+      roomCode:       _roomCode,
+      spectatorToken: _spectatorToken,
+    }, (res) => {
+      if (res && res.success) {
+        _spectatorId    = res.spectator_id || _spectatorId;
+        _spectatorName  = res.spectator_name || _spectatorName;
+        _spectatorToken = res.spectator_token || _spectatorToken;
+        _matchId        = res.match_id || _matchId;
+        if (res.spectator_state && typeof App !== 'undefined' && App.renderSpectatorState) {
+          App.renderSpectatorState(res.spectator_state);
+        }
+        if (typeof App !== 'undefined' && App.handleSpectatorsUpdated) {
+          App.handleSpectatorsUpdated({
+            spectators: res.spectators || [],
+            spectator_count: res.spectator_count || 0,
+          });
+        }
+      }
+    });
   }
 
   /**
@@ -840,6 +966,10 @@ const OnlineClient = (() => {
 
     socket.emit('reconnect_session', payload, (res) => {
       _isReconnecting = false;
+      // Never allow an old player reconnect response to hijack an active spectator session
+      if (_isSpectator || _spectatingIntent) {
+        return;
+      }
       if (res && res.success) {
         _roomCode        = res.room_code;
         _playerId        = res.player_id;
@@ -934,18 +1064,44 @@ const OnlineClient = (() => {
       if (typeof callback === 'function') callback({ success: false, message: 'Not connected to room' });
       return;
     }
+    if (!_socket.connected) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Reconnecting to room… please try again in a moment.' });
+      return;
+    }
     const text = (message || '').trim();
     if (!text) {
       if (typeof callback === 'function') callback({ success: false, message: 'Message cannot be empty' });
       return;
     }
-    _socket.emit('send_chat_message', {
+
+    const payload = {
       roomCode: _roomCode,
       senderId: senderId,
       stage:    stage,
       message:  text,
-    }, (res) => {
-      if (typeof callback === 'function') callback(res);
+    };
+    if (_isSpectator) {
+      payload.spectatorId = _spectatorId;
+    } else {
+      payload.playerId = _playerId;
+    }
+
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (typeof callback === 'function') {
+        callback({ success: false, message: 'Message could not be delivered. Please check your connection and try again.' });
+      }
+    }, 5000);
+
+    _socket.emit('send_chat_message', payload, (res) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (typeof callback === 'function') {
+        callback(res || { success: false, message: 'Server did not confirm message delivery.' });
+      }
     });
   }
 
@@ -958,17 +1114,43 @@ const OnlineClient = (() => {
       if (typeof callback === 'function') callback({ success: false, message: 'Not connected to room' });
       return;
     }
+    if (!_socket.connected) {
+      if (typeof callback === 'function') callback({ success: false, message: 'Reconnecting to room… please try again in a moment.' });
+      return;
+    }
     const text = (message || '').trim();
     if (!text) {
       if (typeof callback === 'function') callback({ success: false, message: 'Message cannot be empty' });
       return;
     }
-    _socket.emit('send_lobby_chat', {
+
+    const payload = {
       roomCode: _roomCode,
-      playerId: senderId,
-      message: text,
-    }, (res) => {
-      if (typeof callback === 'function') callback(res);
+      senderId: senderId,
+      message:  text,
+    };
+    if (_isSpectator) {
+      payload.spectatorId = _spectatorId;
+    } else {
+      payload.playerId = _playerId;
+    }
+
+    let settled = false;
+    const timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (typeof callback === 'function') {
+        callback({ success: false, message: 'Message could not be delivered. Please check your connection and try again.' });
+      }
+    }, 5000);
+
+    _socket.emit('send_lobby_chat', payload, (res) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeoutId);
+      if (typeof callback === 'function') {
+        callback(res || { success: false, message: 'Server did not confirm message delivery.' });
+      }
     });
   }
 
@@ -1035,6 +1217,8 @@ const OnlineClient = (() => {
     joinRoom,
     joinAsSpectator,
     leaveSpectator,
+    setSpectatingIntent,
+    reconnectSpectator,
     startGame,
     restartGame,
     setPostMatchReady,

@@ -378,6 +378,51 @@
     font-size: 0.64rem;
     padding: 1px 10px;
   }
+
+  /* Landscape Mobile HUD & Clear Audio ON/OFF Visibility */
+  .hud-bar {
+    padding: 0 8px;
+    gap: 6px;
+  }
+
+  .hud-btn {
+    min-width: 34px;
+    min-height: 32px;
+    font-size: 1.15rem;
+    padding: 3px 6px;
+  }
+
+  .hud-info {
+    min-width: 38px;
+  }
+
+  .hud-label {
+    font-size: 0.5rem;
+  }
+
+  .hud-value {
+    font-size: 0.74rem;
+  }
+
+  .hud-pill-btn {
+    min-height: 30px;
+    padding: 3px 8px;
+    font-size: 0.7rem;
+  }
+
+  .hud-voice-btn {
+    min-height: 30px;
+    padding: 3px 9px;
+    font-size: 0.7rem;
+  }
+
+  .chat-recent-toast {
+    top: calc(var(--hud-height) + 4px);
+    left: 8px;
+    max-width: min(260px, calc(100vw - 68px));
+    padding: 3px 9px;
+    font-size: 0.7rem;
+  }
 }
 
 /* ── Touch devices — interaction improvements ── */
@@ -471,33 +516,82 @@
     grid-template-columns: repeat(2, 1fr);
   }
 
-  /* ── HUD ── */
+  /* ── HUD (Mobile Portrait — Clean Room/Decks + Clearly Visible Audio ON/OFF) ── */
   .hud-bar {
-    height: 44px;
-    padding: 0 8px;
-    gap: 6px;
+    height: 46px;
+    padding: 0 6px;
+    gap: 4px;
   }
 
   .hud-btn {
     font-size: 1.15rem;
-    padding: 4px 6px;
+    min-width: 34px;
+    min-height: 36px;
+    padding: 4px 5px;
   }
 
   .hud-info {
-    min-width: 45px;
+    min-width: 0;
+    padding: 0 2px;
   }
 
   .hud-label {
-    font-size: 0.52rem;
+    font-size: 0.48rem;
   }
 
   .hud-value {
-    font-size: 0.76rem;
+    font-size: 0.72rem;
   }
 
+  /* Turn status is already shown on the table turn-indicator & action-hint */
   .hud-status {
+    display: none;
+  }
+
+  #btn-spectator-list {
+    margin-left: auto;
+  }
+
+  .hud-pill-btn {
+    min-height: 34px;
+    padding: 4px 7px;
+    gap: 3px;
+    font-size: 0.7rem;
+  }
+
+  .hud-voice-controls {
+    gap: 4px;
+  }
+
+  .hud-voice-btn {
+    min-height: 36px;
+    padding: 4px 8px;
+    gap: 4px;
+    font-size: 0.7rem;
+  }
+
+  /* Keep Mic compact on narrow phones so Speaker Audio ON/OFF always stays 100% visible */
+  .voice-mic-btn {
+    min-width: 36px;
+    padding: 4px 7px;
+  }
+
+  .voice-mic-btn .voice-btn-label {
+    display: none;
+  }
+
+  .voice-speaker-btn {
+    min-width: 78px;
+    padding: 4px 9px;
+    font-size: 0.7rem;
+  }
+
+  .chat-recent-toast {
+    top: calc(var(--hud-height) + 6px);
+    left: 6px;
+    max-width: calc(100vw - 56px);
+    padding: 4px 9px;
     font-size: 0.72rem;
-    max-width: 125px;
   }
 
   /* ── Game Table Felt ── */

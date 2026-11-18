@@ -160,16 +160,55 @@ const TableUI = (() => {
     DOM.selfName.textContent     = (gameConfig && gameConfig.playerName) || 'You';
 
     if (!gameConfig || !gameConfig.isReconnect) {
-      DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
-      DOM.attackBanner.classList.add('hidden');
-      if (DOM.selfAvatar) {
-        DOM.selfAvatar.classList.remove('active-turn');
-        _syncSafeBadge(DOM.selfAvatar, false);
-      }
-      updateCommonPile(0);
+      resetForNewMatch();
     }
 
     _bindTableEvents();
+  }
+
+  // ── Immediately clear all stale previous-match cards, seats, and turn state ──
+  function resetForNewMatch() {
+    _cache();
+    _selectedCardId = null;
+    _myHand = [];
+    _legalSuit = null;
+    _isMyTurn = false;
+    _isFirstDeal = true;
+    _isPlayInFlight = false;
+    _stopTurnTimer();
+
+    if (DOM.handRow) {
+      DOM.handRow.innerHTML = '';
+    }
+    if (DOM.opponentsTop) DOM.opponentsTop.innerHTML = '';
+    if (DOM.opponentsLeft) DOM.opponentsLeft.innerHTML = '';
+    if (DOM.opponentsRight) DOM.opponentsRight.innerHTML = '';
+    if (DOM.playedCardsRow) {
+      DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
+    }
+    if (DOM.attackBanner) {
+      DOM.attackBanner.classList.add('hidden');
+    }
+    if (DOM.selfAvatar) {
+      DOM.selfAvatar.classList.remove('active-turn');
+      _syncSafeBadge(DOM.selfAvatar, false);
+    }
+    if (DOM.selfCardCount) {
+      DOM.selfCardCount.textContent = '0 cards';
+    }
+    if (DOM.selfAttackZone) {
+      DOM.selfAttackZone.style.display = 'none';
+    }
+    if (DOM.turnText) {
+      DOM.turnText.textContent = '—';
+    }
+    if (DOM.playBtn) {
+      DOM.playBtn.disabled = true;
+    }
+    if (DOM.actionHint) {
+      DOM.actionHint.textContent = 'Dealing fresh cards…';
+    }
+    updateCommonPile(0);
   }
 
   function _bindTableEvents() {
@@ -1149,8 +1188,12 @@ const TableUI = (() => {
 
   // ── Update common pile count ──
   function updateCommonPile(count) {
-    DOM.commonPileCount.textContent = count;
-    DOM.hudCommonCount.textContent = `${count} cards`;
+    if (DOM.commonPileCount) {
+      DOM.commonPileCount.textContent = count;
+    }
+    if (DOM.hudCommonCount) {
+      DOM.hudCommonCount.textContent = `${count} cards`;
+    }
   }
 
   // ── Update HUD status text ──
@@ -1265,6 +1308,7 @@ const TableUI = (() => {
 
   return {
     init,
+    resetForNewMatch,
     renderPlayers,
     renderOpponents,
     renderSpectatorPlayers,

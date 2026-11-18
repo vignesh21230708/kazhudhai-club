@@ -35,6 +35,7 @@ class RoomSpectator:
     sid: str | None
     connected: bool = True
     joined_at: float = field(default_factory=time.time)
+    reconnect_token: str = field(default_factory=lambda: secrets.token_hex(24))
 
     def to_summary(self) -> dict:
         return {
@@ -77,6 +78,7 @@ class Room:
         self.match_id: str | None = None
         self.players: dict[str, RoomPlayer] = {}  # player_id -> RoomPlayer
         self.spectators: dict[str, RoomSpectator] = {}  # spectator_id -> RoomSpectator
+        self.disconnected_spectators: dict[str, dict] = {}  # reconnect_token -> {id, name, disconnected_at}
         self.host_id: str | None = None
         self.game_state: GameState | None = None
         self.activity_log: list[dict] = []  # Chronological game activity entries
@@ -400,6 +402,7 @@ class Room:
 
         if self.status == 'waiting':
             self.players.pop(player_id, None)
+            player.sid = None
             if player.is_host and self.players:
                 new_host_id = next(iter(self.players))
                 self.players[new_host_id].is_host = True
@@ -412,6 +415,7 @@ class Room:
             player.status = reason
             player.departure_reason = reason
             player.disconnected_at = time.time()
+            player.sid = None
             if self.status == 'finished':
                 self.post_match_ready[player_id] = False
                 if reason == 'left':
@@ -649,6 +653,8 @@ class RoomManager:
         if not room:
             return None, None
         spec = room.remove_spectator(spectator_id)
+        if spec:
+            room.disconnected_spectators.pop(spec.reconnect_token, None)
         if room.status == 'finished':
             all_left = all(p.status == 'left' for p in room.players.values())
             any_spectators = any(s.connected for s in room.spectators.values())
@@ -667,6 +673,11 @@ class RoomManager:
         room, spec = self.get_spectator_by_sid(sid)
         if room and spec:
             room.remove_spectator(spec.id)
+            room.disconnected_spectators[spec.reconnect_token] = {
+                'id':              spec.id,
+                'name':            spec.name,
+                'disconnected_at': time.time(),
+            }
             if room.status == 'finished':
                 all_left = all(p.status == 'left' for p in room.players.values())
                 any_spectators = any(s.connected for s in room.spectators.values())
@@ -675,25 +686,58 @@ class RoomManager:
             return room, spec
         return None, None
 
-    def start_game(self, room_code: str, requester_id: str) -> Room:
+    def reconnect_spectator(self, room_code: str, spectator_token: str,
+                            new_sid: str) -> tuple[Room | None, RoomSpectator | None]:
+        if not room_code or not spectator_token or not isinstance(spectator_token, str):
+            return None, None
         room = self.get_room(room_code)
         if not room:
-            raise ValueError(f"Room '{room_code}' does not exist")
-        if room.host_id != requester_id:
-            raise ValueError("Only the room host can start the game")
-        if len(room.players) < 2:
-            raise ValueError("At least 2 players are required to start the game")
-        if room.status == 'playing':
-            raise ValueError("Game is already in progress")
+            return None, None
+        clean_token = spectator_token.strip()
+        if not clean_token:
+            return None, None
 
-        # Randomly shuffle player order exactly ONCE when match starts
-        player_list = list(room.players.values())
-        random.shuffle(player_list)
+        # Already active in room (e.g. rapid transport upgrade before disconnect fired)
+        for spec in room.spectators.values():
+            if spec.reconnect_token == clean_token:
+                spec.sid = new_sid
+                spec.connected = True
+                return room, spec
 
-        # Create player configurations using the finalized shuffled order
+        # Recently disconnected spectator within grace period
+        saved = room.disconnected_spectators.pop(clean_token, None)
+        if not saved:
+            return None, None
+        if (time.time() - saved.get('disconnected_at', 0)) > GRACE_PERIOD_SECONDS:
+            return None, None
+
+        restored = RoomSpectator(
+            id=saved['id'],
+            name=saved['name'],
+            sid=new_sid,
+            connected=True,
+            reconnect_token=clean_token,
+        )
+        room.spectators[restored.id] = restored
+        return room, restored
+
+    def _initialize_fresh_match_locked(self, room: Room, player_list: list[RoomPlayer], deck_count: int) -> Room:
+        """
+        Atomically create a brand-new match inside room (caller MUST hold room.play_lock):
+        - Cancels any active turn timer
+        - Shuffles player turn order and creates a fresh GameState (single A♠, fresh deck)
+        - Clears all previous round/result/common-pile/chat/post-match state
+        - Generates a new match_id
+        """
+        room.cancel_turn_timer()
+        room.deck_count = max(1, min(6, deck_count))
+
+        shuffled_players = list(player_list)
+        random.shuffle(shuffled_players)
+
         player_configs = [
             {'id': p.id, 'name': p.name, 'is_ai': False}
-            for p in player_list
+            for p in shuffled_players
         ]
 
         game_state = GameState(
@@ -703,13 +747,15 @@ class RoomManager:
         )
         game_state.setup()
 
-        # Generate fresh match identifier and clear all independent chat stages
+        for p in shuffled_players:
+            p_game = game_state._get_player(p.id)
+            if p_game:
+                p_game.connection_status = p.status
+
         room.match_id = uuid.uuid4().hex[:12]
         room.clear_all_chat_stages()
-        room.cancel_turn_timer()
 
-        # Reset post-match readiness state for the new match
-        room.last_match_player_ids = [p.id for p in player_list]
+        room.last_match_player_ids = [p.id for p in shuffled_players]
         room.last_match_deck_count = room.deck_count
         room.post_match_ready.clear()
         room.post_match_left_ids.clear()
@@ -719,19 +765,45 @@ class RoomManager:
         room.status = 'playing'
         return room
 
+    def start_game(self, room_code: str, requester_id: str) -> Room:
+        room = self.get_room(room_code)
+        if not room:
+            raise ValueError(f"Room '{room_code}' does not exist")
+        with room.play_lock:
+            if room.host_id != requester_id:
+                raise ValueError("Only the room host can start the game")
+            if len(room.players) < 2:
+                raise ValueError("At least 2 players are required to start the game")
+            if room.status == 'playing':
+                raise ValueError("Game is already in progress")
+
+            return self._initialize_fresh_match_locked(
+                room=room,
+                player_list=list(room.players.values()),
+                deck_count=room.deck_count,
+            )
+
     def restart_game(self, room_code: str, requester_id: str) -> Room:
         """
-        Existing host-controlled Restart Game.
-        Generates a completely new random shuffle and distributes cards.
+        Host-controlled Restart Game (atomic under room.play_lock).
+        Validates host authorization and room eligibility, resets all previous
+        round/hand/common-pile/turn state, shuffles a fresh deck using the existing
+        deck configuration, and starts a new match with a new match_id.
         """
         room = self.get_room(room_code)
         if not room:
             raise ValueError(f"Room '{room_code}' does not exist")
-        if room.host_id != requester_id:
-            raise ValueError("Only the room host can start/restart the game")
-        room.game_state = None
-        room.status = 'waiting'
-        return self.start_game(room_code, requester_id)
+        with room.play_lock:
+            if room.host_id != requester_id:
+                raise ValueError("Only the room host can start/restart the game")
+            active_players = [p for p in room.players.values() if p.status != 'left']
+            if len(active_players) < 2:
+                raise ValueError("At least 2 active players are required to restart the game")
+            return self._initialize_fresh_match_locked(
+                room=room,
+                player_list=active_players,
+                deck_count=room.deck_count,
+            )
 
     def play_again(self, room_code: str, requester_id: str) -> Room:
         """
@@ -755,35 +827,12 @@ class RoomManager:
 
             room.play_again_in_progress = True
             try:
-                # Preserve exact previous-match players and deck configuration
-                room.deck_count = room.last_match_deck_count
                 player_list = [room.players[pid] for pid in room.last_match_player_ids]
-                random.shuffle(player_list)
-
-                player_configs = [
-                    {'id': p.id, 'name': p.name, 'is_ai': False}
-                    for p in player_list
-                ]
-
-                game_state = GameState(
-                    game_id=room.code,
-                    player_configs=player_configs,
-                    num_decks=room.deck_count,
+                return self._initialize_fresh_match_locked(
+                    room=room,
+                    player_list=player_list,
+                    deck_count=room.last_match_deck_count,
                 )
-                game_state.setup()
-
-                room.match_id = uuid.uuid4().hex[:12]
-                room.clear_all_chat_stages()
-                room.cancel_turn_timer()
-
-                room.last_match_player_ids = [p.id for p in player_list]
-                room.last_match_deck_count = room.deck_count
-                room.post_match_ready.clear()
-                room.post_match_left_ids.clear()
-
-                room.game_state = game_state
-                room.status = 'playing'
-                return room
             finally:
                 room.play_again_in_progress = False
 

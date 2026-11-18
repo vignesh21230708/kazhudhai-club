@@ -29,6 +29,9 @@ const MenuUI = (() => {
 
     document.getElementById('btn-play-online').addEventListener('click', () => {
       Sound.unlock(); Sound.click();
+      if (typeof OnlineClient !== 'undefined' && OnlineClient.setSpectatingIntent) {
+        OnlineClient.setSpectatingIntent(false);
+      }
       if (typeof OnlineClient !== 'undefined' && OnlineClient.initConnection) {
         OnlineClient.initConnection();
       }
@@ -39,6 +42,9 @@ const MenuUI = (() => {
     if (spectateBtn) {
       spectateBtn.addEventListener('click', () => {
         Sound.unlock(); Sound.click();
+        if (typeof OnlineClient !== 'undefined' && OnlineClient.setSpectatingIntent) {
+          OnlineClient.setSpectatingIntent(true);
+        }
         if (typeof OnlineClient !== 'undefined' && OnlineClient.initConnection) {
           OnlineClient.initConnection();
         }
@@ -611,19 +617,47 @@ const MenuUI = (() => {
       });
     }
 
-    const chatForm = document.getElementById('lobby-chat-form');
+    const chatForm  = document.getElementById('lobby-chat-form');
     const chatInput = document.getElementById('lobby-chat-input');
+    const chatErr   = document.getElementById('lobby-chat-error');
+    const chatBtn   = document.getElementById('btn-send-lobby-chat');
+
+    function setLobbyChatError(msg) {
+      if (!chatErr) return;
+      if (msg) {
+        chatErr.textContent = msg;
+        chatErr.classList.remove('hidden');
+      } else {
+        chatErr.textContent = '';
+        chatErr.classList.add('hidden');
+      }
+    }
+
+    if (chatInput) {
+      chatInput.addEventListener('input', () => setLobbyChatError(''));
+    }
+    if (chatBtn) {
+      chatBtn.addEventListener('mousedown', (e) => e.preventDefault());
+    }
+
     if (chatForm && chatInput) {
       chatForm.addEventListener('submit', (e) => {
         e.preventDefault();
         const text = chatInput.value.trim();
         if (!text) return;
+        setLobbyChatError('');
+        if (chatBtn) chatBtn.disabled = true;
         OnlineClient.sendLobbyChatMessage(text, (res) => {
-          if (res && !res.success) {
-            showToast(res.message || 'Failed to send message', 'error', 2000);
+          if (chatBtn) chatBtn.disabled = false;
+          if (!res || !res.success) {
+            const errMsg = (res && res.message) || 'Failed to send message. Please try again.';
+            setLobbyChatError(errMsg);
+            showToast(errMsg, 'error', 3500);
+          } else {
+            chatInput.value = '';
+            setLobbyChatError('');
           }
         });
-        chatInput.value = '';
       });
     }
   }
@@ -849,6 +883,11 @@ const MenuUI = (() => {
     const inputEl = document.getElementById('lobby-chat-input');
     if (inputEl) {
       inputEl.value = '';
+    }
+    const errEl = document.getElementById('lobby-chat-error');
+    if (errEl) {
+      errEl.textContent = '';
+      errEl.classList.add('hidden');
     }
   }
 

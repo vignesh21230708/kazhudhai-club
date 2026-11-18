@@ -328,6 +328,7 @@
         <div class="lobby-chat-messages" id="lobby-chat-messages">
           <div class="empty-chat-hint">No messages yet. Say hello to your opponents!</div>
         </div>
+        <div class="chat-inline-error hidden" id="lobby-chat-error" role="alert"></div>
         <form class="lobby-chat-form" id="lobby-chat-form">
           <input type="text" class="lobby-chat-input" id="lobby-chat-input" placeholder="Type a message…" maxlength="150" autocomplete="off" />
           <button type="submit" class="lobby-chat-send-btn" id="btn-send-lobby-chat">Send</button>
@@ -480,17 +481,13 @@
     <!-- Top HUD Bar -->
     <div class="hud-bar">
       <button class="hud-btn" id="btn-menu-game" aria-label="Menu">☰</button>
-      <div class="hud-info">
+      <div class="hud-info hud-info-room">
         <span class="hud-label">Room</span>
         <span class="hud-value" id="hud-room-code">OFFLINE</span>
       </div>
-      <div class="hud-info">
+      <div class="hud-info hud-info-decks">
         <span class="hud-label">Decks</span>
         <span class="hud-value" id="hud-deck-count">1</span>
-      </div>
-      <div class="hud-info">
-        <span class="hud-label">Common Pile</span>
-        <span class="hud-value" id="hud-common-count">0 cards</span>
       </div>
       <div class="hud-status" id="hud-status">Waiting to start…</div>
 
@@ -512,7 +509,7 @@
           <span class="voice-btn-icon" id="voice-mic-icon">🎤</span>
           <span class="voice-btn-label" id="voice-mic-label">Mic Off</span>
         </button>
-        <button class="hud-voice-btn voice-speaker-btn" id="btn-voice-speaker" title="Speaker (Deafen/Undeafen)" aria-label="Speaker" type="button">
+        <button class="hud-voice-btn voice-speaker-btn audio-on" id="btn-voice-speaker" title="Audio On (click to mute)" aria-label="Audio On" aria-pressed="true" type="button">
           <span class="voice-btn-icon" id="voice-speaker-icon">🔊</span>
           <span class="voice-btn-label" id="voice-speaker-label">Audio On</span>
         </button>
@@ -539,6 +536,7 @@
       <div class="ingame-chat-messages" id="ingame-chat-messages">
         <div class="empty-chat-hint">In-match chat is fresh for this game. Say hello!</div>
       </div>
+      <div class="chat-inline-error hidden" id="ingame-chat-error" role="alert"></div>
       <form class="lobby-chat-form ingame-chat-form" id="ingame-chat-form">
         <input type="text" class="lobby-chat-input" id="ingame-chat-input" placeholder="Send in-match message…" maxlength="200" autocomplete="off" />
         <button type="submit" class="lobby-chat-send-btn" id="btn-send-ingame-chat">Send</button>
@@ -747,6 +745,7 @@
         <div class="lobby-chat-messages post-match-chat-messages" id="post-match-chat-messages">
           <div class="empty-chat-hint">Match finished! Say GG to everyone.</div>
         </div>
+        <div class="chat-inline-error hidden" id="post-match-chat-error" role="alert"></div>
         <form class="lobby-chat-form" id="post-match-chat-form">
           <input type="text" class="lobby-chat-input" id="post-match-chat-input" placeholder="Send a post-match message…" maxlength="200" autocomplete="off" />
           <button type="submit" class="lobby-chat-send-btn" id="btn-send-post-match-chat">Send</button>
@@ -759,6 +758,13 @@
         <button class="action-btn btn-secondary-action" id="btn-main-menu" type="button">🏠 Main Menu</button>
       </div>
     </div>
+  </div>
+
+  <!-- Temporary Recent Chat Notification (Outside Chat Panel) -->
+  <div id="chat-recent-toast" class="chat-recent-toast hidden" role="status" aria-live="polite" aria-atomic="true">
+    <span class="chat-recent-icon" aria-hidden="true">💬</span>
+    <span class="chat-recent-sender" id="chat-recent-sender"></span>
+    <span class="chat-recent-text" id="chat-recent-text"></span>
   </div>
 
   <!-- Global Toast Notifications -->
