@@ -1071,10 +1071,43 @@ const TableUI = (() => {
     }
   }
 
+  // ── Immediately remove a server-confirmed played card from the local hand UI ──
+  function removeHandCard(cardId) {
+    if (cardId === undefined || cardId === null) return;
+    if (!DOM.handRow) _cache();
+    const targetId = String(cardId);
+    _myHand = _myHand.filter(c => !c || String(c.id) !== targetId);
+    if (_selectedCardId && String(_selectedCardId) === targetId) {
+      _selectedCardId = null;
+    }
+    if (DOM.handRow) {
+      Array.from(DOM.handRow.querySelectorAll('.hand-card, .playing-card')).forEach(el => {
+        if (el && el.dataset && String(el.dataset.cardId) === targetId) {
+          el.remove();
+        }
+      });
+    }
+    if (DOM.selfCardCount) {
+      DOM.selfCardCount.textContent = _formatCardCountText({ cardCount: _myHand.length });
+    }
+  }
+
   // ── Render a card being played to the centre zone ──
   function addPlayedCard(card, playerName, isAttack) {
-    // Remove empty hint
+    if (!DOM.playedCardsRow) _cache();
+    if (!card || !DOM.playedCardsRow) return;
+
+    // Remove empty hint and any fading cards from a previous round clear animation
     DOM.playedCardsRow.querySelector('.empty-zone-hint')?.remove();
+    Array.from(DOM.playedCardsRow.querySelectorAll('[data-clearing="1"]')).forEach(el => el.remove());
+
+    // Prevent duplicate rendering of the same physical played card ID on the table
+    if (card.id !== undefined && card.id !== null) {
+      const targetId = String(card.id);
+      const alreadyRendered = Array.from(DOM.playedCardsRow.querySelectorAll('.playing-card, .card'))
+        .some(el => el && el.dataset && String(el.dataset.cardId) === targetId);
+      if (alreadyRendered) return;
+    }
 
     const cardEl = CardRenderer.createFaceUp(card, { played: true });
 
@@ -1102,10 +1135,24 @@ const TableUI = (() => {
 
   // ── Clear played cards zone ──
   function clearPlayedCards(animate) {
-    const cards = Array.from(DOM.playedCardsRow.children);
-    if (animate && Storage.getSettings().animations && cards.length) {
+    if (!DOM.playedCardsRow) _cache();
+    if (!DOM.playedCardsRow) return;
+    const cards = Array.from(DOM.playedCardsRow.children).filter(
+      el => !(el.classList && el.classList.contains('empty-zone-hint'))
+    );
+    if (animate && typeof Storage !== 'undefined' && Storage.getSettings && Storage.getSettings().animations && cards.length) {
+      cards.forEach(el => {
+        if (el.dataset) el.dataset.clearing = '1';
+      });
       Animations.collectPlayedCards(cards, () => {
-        DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
+        cards.forEach(el => {
+          if (el.parentNode === DOM.playedCardsRow) {
+            el.remove();
+          }
+        });
+        if (DOM.playedCardsRow.children.length === 0) {
+          DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
+        }
       });
     } else {
       DOM.playedCardsRow.innerHTML = '<div class="empty-zone-hint">Waiting for first card…</div>';
@@ -1122,7 +1169,9 @@ const TableUI = (() => {
       return;
     }
 
-    const currentCardEls = DOM.playedCardsRow.querySelectorAll('.playing-card, .card');
+    const currentCardEls = Array.from(DOM.playedCardsRow.querySelectorAll('.playing-card, .card')).filter(
+      el => !(el.closest && el.closest('[data-clearing="1"]'))
+    );
     let isMatch = (currentCardEls.length === playedCards.length);
     if (isMatch) {
       for (let i = 0; i < playedCards.length; i++) {
@@ -1317,6 +1366,7 @@ const TableUI = (() => {
     updateSpectatorList,
     updateOpponent,
     renderHand,
+    removeHandCard,
     addPlayedCard,
     clearPlayedCards,
     syncPlayedCards,

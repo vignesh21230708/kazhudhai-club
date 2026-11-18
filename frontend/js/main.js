@@ -841,6 +841,9 @@ const App = (() => {
       // Render the card human just played
       if (response.action && response.action.card) {
         TableUI.addPlayedCard(response.action.card, response.action.player_name || 'You', response.action.is_attack);
+        if (typeof TableUI.removeHandCard === 'function') {
+          TableUI.removeHandCard(response.action.card.id);
+        }
       }
 
       // Check if round finished
@@ -1450,16 +1453,16 @@ const App = (() => {
     if (!action || !action.card) return;
     if (_activeMatchId && action.match_id && action.match_id !== _activeMatchId) return;
     const myId = OnlineClient.getPlayerId();
+    const isSelfPlay = !!(myId && action.player_id === myId);
 
-    // If played by an opponent (or viewed by spectator), display card onto the table
-    if (!myId || action.player_id !== myId) {
-      TableUI.addPlayedCard(action.card, action.player_name, action.is_attack);
-      if (action.is_attack) {
-        TableUI.showAttackBanner(action.player_name);
-      }
-    } else {
-      // Local card play was already selected, make sure sound plays
-      Sound.cardPlay();
+    // Always render the server-confirmed played card onto the table for EVERY client
+    // (including the player who played it). TableUI.addPlayedCard deduplicates by card.id.
+    TableUI.addPlayedCard(action.card, action.player_name, action.is_attack);
+    if (isSelfPlay && typeof TableUI.removeHandCard === 'function') {
+      TableUI.removeHandCard(action.card.id);
+    }
+    if (action.is_attack) {
+      TableUI.showAttackBanner(action.player_name);
     }
   }
 
@@ -1469,6 +1472,12 @@ const App = (() => {
     const resolutionMatchId = roundResult.match_id || _activeMatchId;
     _clearRoundTimer();
     _isRoundPaused = true;
+
+    // Ensure every client (including the player whose card completed the round)
+    // displays the complete authoritative played cards during round resolution.
+    if (Array.isArray(roundResult.played_cards) && roundResult.played_cards.length > 0 && typeof TableUI.syncPlayedCards === 'function') {
+      TableUI.syncPlayedCards(roundResult.played_cards);
+    }
 
     try {
       if (roundResult.is_attack) {
