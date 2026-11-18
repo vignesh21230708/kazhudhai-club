@@ -26,13 +26,25 @@ const VoiceClient = (() => {
 
   let _localStream      = null;
   let _localTrack       = null;
+  let _isVoiceActive    = false;
   let _isMicActive      = false;
   let _isMicConnecting  = false;
   let _isMicDenied      = false;
   let _isDeafened       = false;
 
-  // peerId -> { pc, audioEl, analyser, stream }
+  // peerId -> { pc, sender, audioEl, analyser, stream, candidateQueue, makingOffer, handlingOffer, lastOfferTime, offerSentCount }
   const _peers = new Map();
+  const _pendingPlayAudioElements = new Set();
+
+  /**
+   * Deterministic offerer role:
+   * The peer with the lexicographically smaller ID initiates the SDP offer.
+   * Asymmetric and deterministic across all participants.
+   */
+  function _isOfferer(peerId) {
+    if (!_localPlayerId || !peerId) return false;
+    return String(_localPlayerId) < String(peerId);
+  }
 
   let _audioContext          = null;
   let _localAnalyser         = null;
@@ -128,21 +140,73 @@ const VoiceClient = (() => {
     }
   }
 
+  function _cleanupVoiceResources() {
+    if (_speakingCheckInterval) {
+      clearInterval(_speakingCheckInterval);
+      _speakingCheckInterval = null;
+    }
+
+    _pendingPlayAudioElements.clear();
+
+    if (_localStream && typeof _localStream.getTracks === 'function') {
+      _localStream.getTracks().forEach(t => {
+        if (t && typeof t.stop === 'function') t.stop();
+      });
+    } else if (_localTrack && typeof _localTrack.stop === 'function') {
+      _localTrack.stop();
+    }
+    _localStream   = null;
+    _localTrack    = null;
+    _localAnalyser = null;
+
+    _peers.forEach((peerData, peerId) => {
+      try {
+        peerData.pc.close();
+      } catch (e) {}
+      if (peerData.audioEl) {
+        peerData.audioEl.srcObject = null;
+        if (typeof peerData.audioEl.remove === 'function') {
+          peerData.audioEl.remove();
+        }
+      }
+      if (typeof TableUI !== 'undefined' && TableUI.setPlayerSpeaking) {
+        TableUI.setPlayerSpeaking(peerId, false);
+      }
+    });
+    _peers.clear();
+
+    if (typeof TableUI !== 'undefined' && TableUI.setPlayerSpeaking) {
+      TableUI.setPlayerSpeaking('self', false);
+    }
+
+    if (_audioContext) {
+      try {
+        _audioContext.close();
+      } catch (e) {}
+      _audioContext = null;
+    }
+
+    _isMicActive     = false;
+    _isMicConnecting = false;
+    _isMicDenied     = false;
+    _isDeafened      = false;
+  }
+
   /**
    * Initialize voice chat for an active match.
    */
   function startVoice(socket, roomCode, playerId, playerName) {
     if (!socket || !roomCode || !playerId) return;
 
+    // Clean up any stale peer connections and microphone state before (re)initializing
+    _cleanupVoiceResources();
+
     _cacheDOM();
     _socket          = socket;
     _roomCode        = roomCode;
     _localPlayerId   = playerId;
     _localPlayerName = playerName;
-    _isMicDenied     = false;
-    _isMicConnecting = false;
-    _isMicActive     = false;
-    _isDeafened      = false;
+    _isVoiceActive   = true;
 
     // Show voice controls in active match HUD
     if (_containerEl) {
@@ -153,8 +217,12 @@ const VoiceClient = (() => {
 
     _bindControlEvents();
 
+    // Register voice signaling listeners immediately so no incoming offer or candidate is dropped
+    _registerSignalingListeners();
+
     // Fetch authoritative ICE server configuration from server
     _socket.emit('get_ice_servers', (res) => {
+      if (!_isVoiceActive) return;
       if (res && res.success && Array.isArray(res.iceServers) && res.iceServers.length > 0) {
         _iceServers = res.iceServers;
       }
@@ -162,6 +230,40 @@ const VoiceClient = (() => {
     });
 
     _startSpeakingCheckLoop();
+  }
+
+  function _attemptAudioPlayback(audio, peerId) {
+    if (!audio) return;
+    const playPromise = audio.play();
+    if (playPromise !== undefined) {
+      playPromise
+        .then(() => {
+          _pendingPlayAudioElements.delete(audio);
+        })
+        .catch((err) => {
+          console.warn(`[VoiceClient] Autoplay blocked for peer ${peerId}:`, err.message);
+          _pendingPlayAudioElements.add(audio);
+        });
+    }
+  }
+
+  function unlockAudioPlayback() {
+    _getAudioContext();
+
+    if (_pendingPlayAudioElements.size > 0) {
+      _pendingPlayAudioElements.forEach((audio) => {
+        if (audio && audio.srcObject) {
+          audio.play()
+            .then(() => {
+              _pendingPlayAudioElements.delete(audio);
+              console.log('[VoiceClient] Autoplay recovered on user interaction');
+            })
+            .catch(() => {});
+        } else {
+          _pendingPlayAudioElements.delete(audio);
+        }
+      });
+    }
   }
 
   function _bindControlEvents() {
@@ -181,32 +283,40 @@ const VoiceClient = (() => {
       });
     }
 
-    // Android / iOS user gesture unlock
-    document.addEventListener('click', () => {
-      _getAudioContext();
-    }, { once: true });
+    // Android / iOS user gesture unlock across multiple touch/click interactions
+    if (typeof document !== 'undefined' && document.addEventListener && !document._voiceGestureBound) {
+      document._voiceGestureBound = true;
+      const userGestures = ['click', 'touchstart', 'pointerdown'];
+      userGestures.forEach((evtName) => {
+        document.addEventListener(evtName, unlockAudioPlayback, { passive: true });
+      });
+    }
   }
 
   function _joinVoiceSession() {
+    if (!_isVoiceActive || !_socket) return;
     _socket.emit('voice_join', {
       roomCode: _roomCode,
       playerId: _localPlayerId,
     }, (res) => {
+      if (!_isVoiceActive) return;
       if (!res || !res.success) {
         console.log('[VoiceClient] voice_join notice:', res ? res.message : 'failed');
         return;
       }
-      // Connect to existing peers in room
+      // Connect to existing peers in room deterministically
       if (Array.isArray(res.peers)) {
         res.peers.forEach(peer => {
           if (peer.peerId && peer.peerId !== _localPlayerId) {
-            _initiatePeerConnection(peer.peerId);
+            if (_isOfferer(peer.peerId)) {
+              _initiatePeerConnection(peer.peerId);
+            } else {
+              _createPeerConnection(peer.peerId);
+            }
           }
         });
       }
     });
-
-    _registerSignalingListeners();
   }
 
   function _registerSignalingListeners() {
@@ -214,13 +324,18 @@ const VoiceClient = (() => {
     _socket._voiceListenersBound = true;
 
     _socket.on('voice_peer_joined', (data) => {
+      if (!_isVoiceActive) return;
       if (data && data.peerId && data.peerId !== _localPlayerId) {
-        // A new peer joined. The existing peer initiates offer.
-        _initiatePeerConnection(data.peerId);
+        if (_isOfferer(data.peerId)) {
+          _initiatePeerConnection(data.peerId);
+        } else {
+          _createPeerConnection(data.peerId);
+        }
       }
     });
 
     _socket.on('voice_signal', async (data) => {
+      if (!_isVoiceActive) return;
       if (!data || !data.fromPeerId || !data.signal) return;
       const { fromPeerId, signal } = data;
 
@@ -238,15 +353,143 @@ const VoiceClient = (() => {
     });
 
     _socket.on('voice_peer_left', (data) => {
+      if (!_isVoiceActive) return;
       if (data && data.peerId) {
         _removePeer(data.peerId);
       }
     });
   }
 
+  function _ensureOffererAudioTransceiver(peerData) {
+    if (!peerData || !peerData.pc) return null;
+    const pc = peerData.pc;
+
+    if (typeof pc.getTransceivers === 'function') {
+      const existing = (pc.getTransceivers() || []).find(
+        t => t && (
+          (t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') ||
+          (t.sender && t.sender.track && t.sender.track.kind === 'audio') ||
+          t === peerData.transceiver
+        )
+      );
+      if (existing) {
+        existing.direction = 'sendrecv';
+        peerData.transceiver = existing;
+        peerData.sender = existing.sender;
+        if (_isMicActive && _localTrack && peerData.sender && typeof peerData.sender.replaceTrack === 'function') {
+          peerData.sender.replaceTrack(_localTrack).catch(() => {});
+        }
+        return existing;
+      }
+    }
+
+    if (peerData.sender) {
+      return peerData.transceiver || null;
+    }
+
+    try {
+      const transceiver = pc.addTransceiver('audio', {
+        direction: 'sendrecv',
+        streams: (_isMicActive && _localStream) ? [_localStream] : [],
+      });
+      peerData.transceiver = transceiver;
+      peerData.sender = transceiver.sender;
+      if (_isMicActive && _localTrack && peerData.sender && typeof peerData.sender.replaceTrack === 'function') {
+        peerData.sender.replaceTrack(_localTrack).catch(() => {});
+      }
+      return transceiver;
+    } catch (e) {
+      console.warn('[VoiceClient] addTransceiver fallback:', e);
+      if (_isMicActive && _localStream && _localTrack && pc.addTrack) {
+        try {
+          peerData.sender = pc.addTrack(_localTrack, _localStream);
+        } catch (_) {}
+      }
+      return null;
+    }
+  }
+
+  function _bindAnswererAudioTransceiver(peerData) {
+    if (!peerData || !peerData.pc) return null;
+    const pc = peerData.pc;
+
+    let transceiver = null;
+    if (typeof pc.getTransceivers === 'function') {
+      const transceivers = pc.getTransceivers() || [];
+      // Bind strictly to the transceiver associated with the incoming offer's audio m-line (mid !== null)
+      transceiver = transceivers.find(
+        t => t && t.mid !== null && t.mid !== undefined &&
+             t.receiver && t.receiver.track && t.receiver.track.kind === 'audio'
+      ) || transceivers.find(
+        t => t && t.receiver && t.receiver.track && t.receiver.track.kind === 'audio'
+      ) || transceivers.find(
+        t => t && t.mid !== null && t.mid !== undefined
+      ) || transceivers[0] || null;
+    }
+
+    if (transceiver) {
+      // Ensure negotiated answer SDP permits the answerer to both send and receive audio
+      transceiver.direction = 'sendrecv';
+      peerData.transceiver = transceiver;
+      peerData.sender = transceiver.sender;
+      if (_isMicActive && _localTrack && transceiver.sender && typeof transceiver.sender.replaceTrack === 'function') {
+        transceiver.sender.replaceTrack(_localTrack).catch((err) => {
+          console.warn('[VoiceClient] Answerer replaceTrack error:', err);
+        });
+      }
+      return transceiver;
+    }
+
+    if (!peerData.sender && typeof pc.getSenders === 'function') {
+      const senders = pc.getSenders() || [];
+      peerData.sender = senders.find(s => s && (s.track === null || (s.track && s.track.kind === 'audio'))) || null;
+    }
+    return null;
+  }
+
+  function _getAudioSender(peerData) {
+    if (!peerData || !peerData.pc) return null;
+    const pc = peerData.pc;
+
+    if (typeof pc.getTransceivers === 'function') {
+      const transceivers = pc.getTransceivers() || [];
+      // Always prefer a negotiated audio transceiver (mid !== null) over any unassociated transceiver
+      const negotiated = transceivers.find(
+        t => t && t.mid !== null && t.mid !== undefined && (
+          (t.receiver && t.receiver.track && t.receiver.track.kind === 'audio') ||
+          (t.sender && t.sender.track && t.sender.track.kind === 'audio') ||
+          t === peerData.transceiver
+        )
+      );
+      if (negotiated && negotiated.sender) {
+        peerData.transceiver = negotiated;
+        peerData.sender = negotiated.sender;
+        return negotiated.sender;
+      }
+    }
+
+    if (peerData.sender) {
+      return peerData.sender;
+    }
+
+    if (typeof pc.getSenders === 'function') {
+      const senders = pc.getSenders() || [];
+      const found = senders.find(s => s && (s.track === null || (s.track && s.track.kind === 'audio')));
+      if (found) {
+        peerData.sender = found;
+        return found;
+      }
+    }
+    return null;
+  }
+
   function _createPeerConnection(peerId) {
     if (_peers.has(peerId)) {
-      return _peers.get(peerId).pc;
+      const existing = _peers.get(peerId);
+      if (existing.pc && existing.pc.connectionState !== 'closed' && existing.pc.signalingState !== 'closed') {
+        return existing.pc;
+      }
+      _removePeer(peerId);
     }
 
     let pc;
@@ -259,23 +502,36 @@ const VoiceClient = (() => {
 
     const peerData = {
       pc,
+      transceiver: null,
+      sender: null,
       audioEl: null,
       analyser: null,
       stream: null,
+      candidateQueue: [],
+      makingOffer: false,
+      handlingOffer: false,
+      lastOfferTime: 0,
+      offerSentCount: 0,
     };
     _peers.set(peerId, peerData);
 
-    // If local track is already active, attach it to peer
-    if (_localStream && _localTrack) {
+    // Pre-allocate sendrecv audio transceiver ONLY for the offerer.
+    // The answerer binds to the remote offer's negotiated audio transceiver in _handleOffer()
+    // so Unified Plan never leaves an orphaned mid=null transceiver.
+    if (_isOfferer(peerId)) {
+      _ensureOffererAudioTransceiver(peerData);
+    } else if (_isMicActive && _localStream && _localTrack && typeof pc.addTrack === 'function') {
+      // If answerer already enabled mic before offer arrives, addTrack() creates a transceiver
+      // that Unified Plan associates automatically when setRemoteDescription(offer) runs.
       try {
-        pc.addTrack(_localTrack, _localStream);
+        peerData.sender = pc.addTrack(_localTrack, _localStream);
       } catch (e) {
-        console.warn('[VoiceClient] addTrack error:', e);
+        console.warn('[VoiceClient] Answerer pre-offer addTrack error:', e);
       }
     }
 
     pc.onicecandidate = (event) => {
-      if (event.candidate && _socket && _roomCode) {
+      if (event.candidate && _isVoiceActive && _socket && _roomCode) {
         _socket.emit('voice_signal', {
           roomCode:     _roomCode,
           playerId:     _localPlayerId,
@@ -286,41 +542,23 @@ const VoiceClient = (() => {
     };
 
     pc.ontrack = (event) => {
-      if (!event.streams || !event.streams[0]) return;
-      const remoteStream = event.streams[0];
+      if (!event.track) return;
+      let remoteStream = null;
+      if (event.streams && event.streams.length > 0 && event.streams[0]) {
+        remoteStream = event.streams[0];
+      } else {
+        // Fallback: wrap raw track into a new MediaStream
+        remoteStream = new MediaStream([event.track]);
+      }
       peerData.stream = remoteStream;
-
-      // Create / attach audio element
-      let audio = peerData.audioEl;
-      if (!audio) {
-        audio = document.createElement('audio');
-        audio.autoplay = true;
-        audio.playsInline = true;
-        audio.muted = _isDeafened;
-        audio.style.display = 'none';
-        document.body.appendChild(audio);
-        peerData.audioEl = audio;
-      }
-      audio.srcObject = remoteStream;
-      audio.play().catch(() => {});
-
-      // Setup Web Audio Analyser for speaking level detection
-      try {
-        const ctx = _getAudioContext();
-        if (ctx) {
-          const source = ctx.createMediaStreamSource(remoteStream);
-          const analyser = ctx.createAnalyser();
-          analyser.fftSize = 256;
-          source.connect(analyser);
-          peerData.analyser = analyser;
-        }
-      } catch (e) {
-        console.warn('[VoiceClient] Analyser setup error for peer', peerId, e);
-      }
+      _attachRemoteAudio(peerId, remoteStream);
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed' || pc.connectionState === 'closed') {
+      const current = _peers.get(peerId);
+      if (!current || current.pc !== pc) return;
+      // Allow transient 'disconnected' state to recover; clean up only on terminal states
+      if (pc.connectionState === 'failed' || pc.connectionState === 'closed') {
         _removePeer(peerId);
       }
     };
@@ -328,57 +566,213 @@ const VoiceClient = (() => {
     return pc;
   }
 
+  function _attachRemoteAudio(peerId, remoteStream) {
+    const peerData = _peers.get(peerId);
+    if (!peerData) return;
+
+    let audio = peerData.audioEl;
+    if (!audio) {
+      audio = (typeof document !== 'undefined' && document.getElementById)
+        ? document.getElementById(`voice-audio-${peerId}`)
+        : null;
+      if (!audio && typeof document !== 'undefined' && document.createElement) {
+        audio = document.createElement('audio');
+        audio.id = `voice-audio-${peerId}`;
+        audio.autoplay = true;
+        audio.playsInline = true;
+        audio.style.display = 'none';
+        if (document.body && document.body.appendChild) {
+          document.body.appendChild(audio);
+        }
+      }
+      peerData.audioEl = audio;
+    }
+
+    if (audio) {
+      audio.muted = _isDeafened;
+      if (audio.srcObject !== remoteStream) {
+        audio.srcObject = remoteStream;
+      }
+      _attemptAudioPlayback(audio, peerId);
+    }
+
+    _setupRemoteAnalyser(peerId, remoteStream);
+  }
+
+  function _setupRemoteAnalyser(peerId, remoteStream) {
+    const peerData = _peers.get(peerId);
+    if (!peerData) return;
+    try {
+      const ctx = _getAudioContext();
+      if (ctx && remoteStream) {
+        const source = ctx.createMediaStreamSource(remoteStream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        peerData.analyser = analyser;
+      }
+    } catch (e) {
+      console.warn('[VoiceClient] Analyser setup error for peer', peerId, e);
+    }
+  }
+
   async function _initiatePeerConnection(peerId) {
+    if (!_isVoiceActive) return;
     const pc = _createPeerConnection(peerId);
     if (!pc) return;
+    const peerData = _peers.get(peerId);
+
+    // If already in have-local-offer, do not blindly recreate or retransmit on duplicate join events
+    if (pc.signalingState === 'have-local-offer') {
+      const now = Date.now();
+      const timeSinceOffer = (peerData && peerData.lastOfferTime) ? (now - peerData.lastOfferTime) : 0;
+      // Retry only when signaling flow confirms that previous offer may have been missed (e.g. >= 1500ms elapsed without answer)
+      if (timeSinceOffer >= 1500 && peerData && (peerData.offerSentCount || 1) < 3 && pc.localDescription) {
+        peerData.lastOfferTime = now;
+        peerData.offerSentCount = (peerData.offerSentCount || 1) + 1;
+        _socket.emit('voice_signal', {
+          roomCode:     _roomCode,
+          playerId:     _localPlayerId,
+          targetPeerId: peerId,
+          signal:       { type: pc.localDescription.type, sdp: pc.localDescription.sdp },
+        });
+      }
+      return;
+    }
+
+    if (pc.signalingState !== 'stable') {
+      return;
+    }
 
     try {
-      const offer = await pc.createOffer({
-        offerToReceiveAudio: true,
-      });
+      if (peerData) peerData.makingOffer = true;
+      _ensureOffererAudioTransceiver(peerData);
+      const offer = await pc.createOffer();
+      if (!_isVoiceActive || pc.signalingState !== 'stable') {
+        return;
+      }
       await pc.setLocalDescription(offer);
 
-      _socket.emit('voice_signal', {
-        roomCode:     _roomCode,
-        playerId:     _localPlayerId,
-        targetPeerId: peerId,
-        signal:       offer,
-      });
+      if (peerData) {
+        peerData.lastOfferTime = Date.now();
+        peerData.offerSentCount = 1;
+      }
+
+      if (_isVoiceActive && _socket && _roomCode) {
+        _socket.emit('voice_signal', {
+          roomCode:     _roomCode,
+          playerId:     _localPlayerId,
+          targetPeerId: peerId,
+          signal:       offer,
+        });
+      }
     } catch (err) {
       console.warn('[VoiceClient] createOffer failed for peer', peerId, err);
+    } finally {
+      if (peerData) peerData.makingOffer = false;
     }
   }
 
   async function _handleOffer(peerId, offer) {
+    if (!_isVoiceActive) return;
     const pc = _createPeerConnection(peerId);
     if (!pc) return;
+    const peerData = _peers.get(peerId);
+    if (!peerData) return;
 
-    await pc.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await pc.createAnswer();
-    await pc.setLocalDescription(answer);
+    // Prevent concurrent _handleOffer() operations for the same peer
+    if (peerData.handlingOffer) {
+      return;
+    }
 
-    _socket.emit('voice_signal', {
-      roomCode:     _roomCode,
-      playerId:     _localPlayerId,
-      targetPeerId: peerId,
-      signal:       answer,
-    });
+    // Safely ignore a duplicate incoming offer while an existing remote offer is being answered
+    if (pc.signalingState === 'have-remote-offer') {
+      return;
+    }
+
+    peerData.handlingOffer = true;
+    try {
+      // Glare safety: perform rollback ONLY when signalingState is exactly 'have-local-offer'
+      if (pc.signalingState === 'have-local-offer') {
+        if (!_isOfferer(peerId)) {
+          await pc.setLocalDescription({ type: 'rollback' });
+        } else {
+          return;
+        }
+      } else if (pc.signalingState !== 'stable') {
+        return;
+      }
+
+      await pc.setRemoteDescription(new RTCSessionDescription(offer));
+      // Bind to the offer-associated audio transceiver (mid !== null) and set direction='sendrecv'
+      // BEFORE createAnswer() so the answer SDP permits bidirectional audio.
+      _bindAnswererAudioTransceiver(peerData);
+      await _drainCandidateQueue(peerData);
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      if (_isVoiceActive && _socket && _roomCode) {
+        _socket.emit('voice_signal', {
+          roomCode:     _roomCode,
+          playerId:     _localPlayerId,
+          targetPeerId: peerId,
+          signal:       answer,
+        });
+      }
+    } catch (err) {
+      console.warn('[VoiceClient] Error handling offer from', peerId, err);
+    } finally {
+      peerData.handlingOffer = false;
+    }
   }
 
   async function _handleAnswer(peerId, answer) {
     const peerData = _peers.get(peerId);
     if (peerData && peerData.pc) {
-      await peerData.pc.setRemoteDescription(new RTCSessionDescription(answer));
+      try {
+        if (peerData.pc.signalingState === 'have-local-offer') {
+          peerData.offerSentCount = 0;
+          peerData.lastOfferTime = 0;
+          await peerData.pc.setRemoteDescription(new RTCSessionDescription(answer));
+          await _drainCandidateQueue(peerData);
+        }
+      } catch (err) {
+        console.warn('[VoiceClient] Error handling answer from', peerId, err);
+      }
     }
   }
 
   async function _handleCandidate(peerId, candidate) {
-    const peerData = _peers.get(peerId);
-    if (peerData && peerData.pc) {
+    if (!candidate) return;
+    let peerData = _peers.get(peerId);
+    if (!peerData) {
+      _createPeerConnection(peerId);
+      peerData = _peers.get(peerId);
+    }
+    if (!peerData || !peerData.pc) return;
+
+    const pc = peerData.pc;
+    if (!pc.remoteDescription || !pc.remoteDescription.type) {
+      peerData.candidateQueue.push(candidate);
+      return;
+    }
+
+    try {
+      await pc.addIceCandidate(new RTCIceCandidate(candidate));
+    } catch (e) {
+      console.warn('[VoiceClient] addIceCandidate error:', peerId, e);
+    }
+  }
+
+  async function _drainCandidateQueue(peerData) {
+    if (!peerData || !peerData.pc || !peerData.candidateQueue || !peerData.candidateQueue.length) return;
+    const queue = peerData.candidateQueue.splice(0);
+    for (const cand of queue) {
       try {
-        await peerData.pc.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (e) {
-        console.warn('[VoiceClient] addIceCandidate error:', e);
+        await peerData.pc.addIceCandidate(new RTCIceCandidate(cand));
+      } catch (err) {
+        console.warn('[VoiceClient] Draining candidate error:', err);
       }
     }
   }
@@ -391,7 +785,9 @@ const VoiceClient = (() => {
       } catch (e) {}
       if (peerData.audioEl) {
         peerData.audioEl.srcObject = null;
-        peerData.audioEl.remove();
+        if (typeof peerData.audioEl.remove === 'function') {
+          peerData.audioEl.remove();
+        }
       }
       _peers.delete(peerId);
     }
@@ -407,13 +803,22 @@ const VoiceClient = (() => {
   async function toggleMic() {
     if (_isMicConnecting) return;
 
-    _getAudioContext();
+    unlockAudioPlayback();
 
     if (_localStream && _localTrack) {
       // Toggle existing track
       _isMicActive = !_isMicActive;
       _localTrack.enabled = _isMicActive;
       _updateMicUI();
+
+      // Seamless track replacement without renegotiation
+      _peers.forEach((peerData) => {
+        const sender = _getAudioSender(peerData);
+        if (sender && typeof sender.replaceTrack === 'function') {
+          sender.replaceTrack(_isMicActive ? _localTrack : null).catch(() => {});
+        }
+      });
+
       if (!_isMicActive && typeof TableUI !== 'undefined' && TableUI.setPlayerSpeaking) {
         TableUI.setPlayerSpeaking('self', false);
       }
@@ -435,6 +840,14 @@ const VoiceClient = (() => {
         video: false,
       });
 
+      if (!_isVoiceActive) {
+        if (stream && typeof stream.getTracks === 'function') {
+          stream.getTracks().forEach(t => { if (t && typeof t.stop === 'function') t.stop(); });
+        }
+        _isMicConnecting = false;
+        return;
+      }
+
       _localStream = stream;
       _localTrack  = stream.getAudioTracks()[0];
       _isMicActive = true;
@@ -454,20 +867,21 @@ const VoiceClient = (() => {
         console.warn('[VoiceClient] Local analyser setup error:', err);
       }
 
-      // Attach track to all existing peer connections and renegotiate
-      _peers.forEach(async (peerData, peerId) => {
-        try {
-          peerData.pc.addTrack(_localTrack, _localStream);
-          const offer = await peerData.pc.createOffer();
-          await peerData.pc.setLocalDescription(offer);
-          _socket.emit('voice_signal', {
-            roomCode:     _roomCode,
-            playerId:     _localPlayerId,
-            targetPeerId: peerId,
-            signal:       offer,
+      // Seamlessly replace track on all negotiated peer senders without renegotiation
+      _peers.forEach((peerData) => {
+        const sender = _getAudioSender(peerData);
+
+        if (sender && typeof sender.replaceTrack === 'function') {
+          sender.replaceTrack(_localTrack).catch((err) => {
+            console.warn('[VoiceClient] replaceTrack error:', err);
           });
-        } catch (e) {
-          console.warn('[VoiceClient] Add track to peer error:', peerId, e);
+        } else if (peerData.pc && peerData.pc.addTrack) {
+          // Fallback if no sender/transceiver existed yet (e.g., answerer before offer arrives)
+          try {
+            peerData.sender = peerData.pc.addTrack(_localTrack, _localStream);
+          } catch (e) {
+            console.warn('[VoiceClient] addTrack fallback error:', e);
+          }
         }
       });
 
@@ -501,6 +915,10 @@ const VoiceClient = (() => {
         peerData.audioEl.muted = _isDeafened;
       }
     });
+
+    if (!_isDeafened) {
+      unlockAudioPlayback();
+    }
 
     if (typeof showToast === 'function') {
       showToast(_isDeafened ? 'Audio deafened' : 'Audio enabled', 'info', 2000);
@@ -554,53 +972,21 @@ const VoiceClient = (() => {
    * Cleanly leave voice chat, release microphone, and disconnect all peers.
    */
   function leaveVoice() {
-    if (_speakingCheckInterval) {
-      clearInterval(_speakingCheckInterval);
-      _speakingCheckInterval = null;
-    }
+    const prevSocket   = _socket;
+    const prevRoomCode = _roomCode;
+    const prevPlayerId = _localPlayerId;
 
-    if (_localStream) {
-      _localStream.getTracks().forEach(t => t.stop());
-      _localStream = null;
-      _localTrack  = null;
-    }
+    _isVoiceActive = false;
+    _cleanupVoiceResources();
 
-    _peers.forEach((peerData, peerId) => {
-      try {
-        peerData.pc.close();
-      } catch (e) {}
-      if (peerData.audioEl) {
-        peerData.audioEl.srcObject = null;
-        peerData.audioEl.remove();
-      }
-      if (typeof TableUI !== 'undefined' && TableUI.setPlayerSpeaking) {
-        TableUI.setPlayerSpeaking(peerId, false);
-      }
-    });
-    _peers.clear();
-
-    if (typeof TableUI !== 'undefined' && TableUI.setPlayerSpeaking) {
-      TableUI.setPlayerSpeaking('self', false);
-    }
-
-    if (_audioContext) {
-      try {
-        _audioContext.close();
-      } catch (e) {}
-      _audioContext = null;
-    }
-
-    if (_socket && _roomCode && _localPlayerId) {
-      _socket.emit('voice_leave', {
-        roomCode: _roomCode,
-        playerId: _localPlayerId,
+    if (prevSocket && prevRoomCode && prevPlayerId) {
+      prevSocket.emit('voice_leave', {
+        roomCode: prevRoomCode,
+        playerId: prevPlayerId,
       });
     }
 
-    _isMicActive     = false;
-    _isMicConnecting = false;
-    _isMicDenied     = false;
-    _isDeafened      = false;
+    _roomCode = null;
 
     if (_containerEl) {
       _containerEl.classList.add('hidden');
@@ -612,5 +998,15 @@ const VoiceClient = (() => {
     toggleMic,
     toggleSpeaker,
     leaveVoice,
+    unlockAudioPlayback,
+    _isOfferer,
+    _createPeerConnection,
+    _handleOffer,
+    _handleAnswer,
+    _handleCandidate,
+    _drainCandidateQueue,
+    _attachRemoteAudio,
+    _attemptAudioPlayback,
+    _peers,
   };
 })();

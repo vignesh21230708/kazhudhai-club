@@ -15,6 +15,43 @@ from game_engine.deck import SUIT_SYMBOLS
 
 def register_socket_events(socketio):
 
+    def _ensure_voice_peers_locked(room):
+        """Ensure room.voice_peers exists. Caller MUST hold room.play_lock."""
+        if not hasattr(room, 'voice_peers') or room.voice_peers is None:
+            room.voice_peers = set()
+        return room.voice_peers
+
+    def _clear_voice_peers(room):
+        """Safely initialize/clear room.voice_peers under room.play_lock."""
+        if not room:
+            return
+        with room.play_lock:
+            _ensure_voice_peers_locked(room).clear()
+
+    def _remove_voice_peer_and_notify(room, player_id):
+        """
+        Atomically remove player_id from room.voice_peers under room.play_lock.
+        Notifies only remaining active voice peers via their Socket.IO sid,
+        returning True only when the peer was actually removed (preventing
+        duplicate voice_peer_left notifications).
+        """
+        if not room or not player_id:
+            return False
+        notify_sids = []
+        with room.play_lock:
+            voice_peers = _ensure_voice_peers_locked(room)
+            if player_id not in voice_peers:
+                return False
+            voice_peers.discard(player_id)
+            for pid in list(voice_peers):
+                peer = room.players.get(pid)
+                if peer and peer.connected and peer.sid:
+                    notify_sids.append(peer.sid)
+
+        for sid in notify_sids:
+            emit('voice_peer_left', {'peerId': player_id}, to=sid)
+        return True
+
     @socketio.on('connect')
     def handle_connect():
         pass
@@ -23,6 +60,10 @@ def register_socket_events(socketio):
     def handle_disconnect():
         room, player = room_manager.handle_disconnect(request.sid, reason='disconnected')
         if room and player:
+            # Always clean up voice participant state and notify active voice peers
+            # even when departure_notified was already set (e.g. client_connection_lost).
+            _remove_voice_peer_and_notify(room, player.id)
+
             # Prevent duplicate departure notification if player already called leave_room
             if getattr(player, 'departure_notified', False):
                 return
@@ -58,7 +99,6 @@ def register_socket_events(socketio):
             if room.status == 'waiting':
                 emit('room_updated', room.to_lobby_summary(), room=room.code)
             elif room.status == 'playing':
-                emit('voice_peer_left', {'peerId': player.id}, room=room.code)
                 _broadcast_personalized_state(room)
 
     @socketio.on('client_connection_lost')
@@ -110,6 +150,7 @@ def register_socket_events(socketio):
                 deck_count=deck_count,
                 sid=request.sid,
             )
+            _clear_voice_peers(room)
             join_room(room.code)
 
             print(f"[SocketIO] Room created: code={room.code}, host={host.name}, sid={request.sid}")
@@ -194,6 +235,7 @@ def register_socket_events(socketio):
             player = room.players.get(player_id) if room else None
 
             if room and player:
+                _remove_voice_peer_and_notify(room, player.id)
                 player.departure_notified = True
                 message = f"{player.name} left the game."
                 notice  = f"🔴 {player.name} left the game."
@@ -218,7 +260,6 @@ def register_socket_events(socketio):
                 }, room=room.code)
 
                 emit('activity_logged', act, room=room.code)
-                emit('voice_peer_left', {'peerId': player.id}, room=room.code)
 
             updated_room = room_manager.leave_room(room_code, player_id, reason=reason)
             if updated_room:
@@ -275,6 +316,7 @@ def register_socket_events(socketio):
                 # Game finished check
                 if room.game_state.status == 'finished':
                     room.status = 'finished'
+                    _ensure_voice_peers_locked(room).clear()
                     room.cancel_turn_timer()
                     kazhudhai = next((r for r in room.game_state.rankings if r.get('is_kazhudhai')), None)
                     k_name = kazhudhai['name'] if kazhudhai else 'Unknown'
@@ -305,6 +347,8 @@ def register_socket_events(socketio):
             else:
                 room = room_manager.start_game(room_code, player_id)
 
+            _clear_voice_peers(room)
+
             # Log game started activity
             act = room.add_activity('start', "Game started.", icon='🚀')
 
@@ -329,6 +373,7 @@ def register_socket_events(socketio):
             player_id = data.get('playerId')
 
             room = room_manager.restart_game(room_code, player_id)
+            _clear_voice_peers(room)
 
             act = room.add_activity('start', "Match restarted (fresh random deck shuffled).", icon='🔄')
 
@@ -391,6 +436,7 @@ def register_socket_events(socketio):
                 # If game is finished, broadcast game over
                 if room.game_state.status == 'finished':
                     room.status = 'finished'
+                    _ensure_voice_peers_locked(room).clear()
                     room.cancel_turn_timer()
                     kazhudhai = next((r for r in room.game_state.rankings if r.get('is_kazhudhai')), None)
                     k_name = kazhudhai['name'] if kazhudhai else 'Unknown'
@@ -579,7 +625,8 @@ def register_socket_events(socketio):
         ]
         turn_url = os.environ.get('TURN_SERVER_URL')
         if turn_url:
-            turn_cfg = {'urls': turn_url}
+            urls = [u.strip() for u in turn_url.split(',') if u.strip()]
+            turn_cfg = {'urls': urls if len(urls) > 1 else (urls[0] if urls else turn_url.strip())}
             turn_user = os.environ.get('TURN_USERNAME')
             turn_cred = os.environ.get('TURN_CREDENTIAL')
             if turn_user:
@@ -600,17 +647,29 @@ def register_socket_events(socketio):
         if player_id not in room.players:
             return {'success': False, 'message': 'Player not in room'}
 
-        player = room.players[player_id]
-        emit('voice_peer_joined', {
-            'peerId': player.id,
-            'name':   player.name,
-        }, room=room.code, include_self=False)
+        active_peers = []
+        notify_sids = []
+        with room.play_lock:
+            voice_peers = _ensure_voice_peers_locked(room)
+            player = room.players[player_id]
 
-        active_peers = [
-            {'peerId': p.id, 'name': p.name}
-            for p in room.players.values()
-            if p.id != player_id and p.connected and p.status == 'connected'
-        ]
+            for pid in list(voice_peers):
+                if pid == player_id:
+                    continue
+                p = room.players.get(pid)
+                if p and p.connected and p.status == 'connected':
+                    active_peers.append({'peerId': p.id, 'name': p.name})
+                    if p.sid:
+                        notify_sids.append(p.sid)
+
+            voice_peers.add(player_id)
+
+        for sid in notify_sids:
+            emit('voice_peer_joined', {
+                'peerId': player.id,
+                'name':   player.name,
+            }, to=sid)
+
         return {'success': True, 'peers': active_peers}
 
     @socketio.on('voice_signal')
@@ -640,7 +699,7 @@ def register_socket_events(socketio):
         player_id = data.get('playerId')
         room = room_manager.get_room(room_code)
         if room:
-            emit('voice_peer_left', {'peerId': player_id}, room=room.code, include_self=False)
+            _remove_voice_peer_and_notify(room, player_id)
         return {'success': True}
 
     def _broadcast_personalized_state(room):
